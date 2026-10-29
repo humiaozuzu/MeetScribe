@@ -4,7 +4,7 @@
 
 import { addChunk, addSegment, putSegment } from '../lib/db.js';
 import { EVT, STATUS, broadcast } from '../lib/messages.js';
-import { SonioxRealtime, buildRealtimeConfig, SAMPLE_RATE } from '../lib/soniox-realtime.js';
+import { SonioxRealtime, buildRealtimeConfig, meetingTopic, SAMPLE_RATE } from '../lib/soniox-realtime.js';
 import { TranscriptAssembler } from '../lib/transcript.js';
 
 const RECORDER_TIMESLICE_MS = 5000;
@@ -164,9 +164,7 @@ export class TrackPipeline {
       onUpdate: (seg) => this._updateSegment(seg),
       onPartial: (p) => this._onPartial(p),
     });
-    const config = buildRealtimeConfig(this.settings, {
-      diarization: this.source === 'them' && this.settings.enableDiarization,
-    });
+    const config = this._rtConfig();
     this.rt = new SonioxRealtime({
       apiKey: this.settings.sonioxApiKey,
       config,
@@ -201,9 +199,14 @@ export class TrackPipeline {
   setLanguages(languageHints) {
     this.settings = { ...this.settings, languageHints };
     if (!this.rt) return;
-    this.rt.reconfigure(buildRealtimeConfig(this.settings, {
+    this.rt.reconfigure(this._rtConfig());
+  }
+
+  _rtConfig() {
+    return buildRealtimeConfig(this.settings, {
       diarization: this.source === 'them' && this.settings.enableDiarization,
-    }));
+      topic: meetingTopic(this.meeting.title),
+    });
   }
 
   _setStatus(status, detail) {

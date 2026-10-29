@@ -44,6 +44,9 @@ MediaStream ─┬─► MediaRecorder(webm/opus 32 kbps, 5 s timeslice) ─► 
                            └─► tokens ─► TranscriptAssembler ─► segments store + broadcast
 ```
 
+- Resampling (`lib/resampler.js`) runs a Blackman-windowed sinc low-pass (7.2 kHz cutoff, about 16 taps per unit of rate ratio, so 49 taps for 48k→16k), then interpolates linearly between filtered samples. This prevents content above 8 kHz from aliasing into the speech band, and it handles non-integer ratios such as 44.1k.
+- Mic constraints: echo cancellation and auto gain are always on. Noise suppression is off by default (`micNoiseSuppression`), because browser NS removes speech detail that the recognizer could use.
+- Soniox config: `max_endpoint_delay_ms` defaults to 1000. 500 is the minimum: it splits sentences and slightly lowers accuracy (Soniox's own default is 2000). `context.general` carries the meeting title as `topic`, unless the title is only a Meet code. `context.terms` carries the user vocabulary.
 - The worklet output goes through a muted `GainNode` into `destination`, which makes sure the audio graph pulls it. The microphone is never played back.
 - Levels are aggregated every 30 s into a log entry, plus a warning after 60 s of silence.
 
@@ -82,6 +85,7 @@ chunks(source) ─► Blob(webm) ─► POST /v1/files ─► POST /v1/transcrip
 
 - `gaps`: keep only tokens inside the open gaps, append them as `origin: 'async'` segments, and mark the gaps `filled`.
 - `full`: replace every segment of that source.
+- Language hints come from the meeting (the initial ones plus every mid-meeting change, from `meeting.transcription`), not from the current default settings. The meeting title is passed as context, the same as in real time.
 - Job ids are persisted in `meeting.jobs`, so a closed History tab can resume polling.
 
 ## Auto stop

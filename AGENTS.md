@@ -29,13 +29,14 @@ extension/
   src/offscreen/               hidden document that owns all audio + WebSockets
     offscreen.js               session orchestration (one meeting at a time)
     track.js                   one audio source: recorder branch + PCM/transcription branch
-    pcm-worklet.js             AudioWorklet: downmix, resample to 16 kHz, Int16, levels
+    pcm-worklet.js             AudioWorklet: downmix, resample to 16 kHz (lib/resampler.js), Int16, levels
   src/content/meeting-watch.js content script: "is the user in a call?" (hang-up button present)
   src/lib/
     soniox-realtime.js         WS client: reconnect, 10 s buffer, gap reporting, rotation, reconfigure
     soniox-async.js            REST: upload → transcribe → poll → fetch → delete
     transcript.js              token → segment assembly (pure, unit-tested)
     retranscribe.js            after-meeting gap fill / full re-transcription
+    resampler.js               streaming low-pass + resample (pure, used by the worklet)
     db.js                      IndexedDB stores: meetings, segments, chunks, logs
     log.js                     structured logger (console + IndexedDB), export as JSONL
     messages.js                every message type / status constant

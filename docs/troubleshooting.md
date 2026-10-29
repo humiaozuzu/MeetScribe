@@ -49,13 +49,16 @@ Either nobody else spoke, the meeting tab itself was muted, or the wrong tab was
 Your speakers are feeding the microphone. Wear headphones.
 
 **Captions are chopped into tiny pieces.**
-Increase **断句等待** (endpoint delay) in options, for example to 800–1000 ms.
+Increase **断句等待** (endpoint delay) in options, for example to 1500–2000 ms. The default is 1000. Settings saved before that default existed and still at the old 500 are migrated to 1000 once.
 
 **Recording does not stop after leaving the call.**
 Look at the `meeting presence` lines. If `inCall` never became `true`, the hang-up button detection did not match. Meet or Teams may have changed their page, so open an issue with the log. As a workaround, stop manually.
 
 **I muted myself in the meeting, but my speech is still transcribed (or I am not transcribed after unmuting).**
 Look at the `meeting mic state` lines. `muted: null` means the mic button was not found, so MeetScribe treats you as unmuted. Meet or Teams may have changed their page; open an issue with the log. Muting only pauses live transcription: the "me" recording still contains everything, so a full re-transcription will include speech made while muted.
+
+**My own speech is recognized poorly in a noisy room.**
+Turn on **麦克风降噪** (mic noise suppression) in options. It is off by default because it can strip speech detail. It takes effect from the next meeting. The `track starting` log line shows the applied `settings.noiseSuppression`.
 
 **"转写缺口" (gap) shown although nothing seemed missing.**
 Gaps are stretches of audio that never reached Soniox (network drop, or no key). Click **补转缺口** (fill gaps) to transcribe them from the recording. Versions before the stop-race fix could report a 1–2 s gap at the very end; that one is harmless.

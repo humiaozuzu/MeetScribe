@@ -87,7 +87,7 @@ async function start({ meeting, streamId, settings, micMuted }) {
         audio: {
           ...(settings.micDeviceId ? { deviceId: { exact: settings.micDeviceId } } : {}),
           echoCancellation: true,
-          noiseSuppression: true,
+          noiseSuppression: !!settings.micNoiseSuppression,
           autoGainControl: true,
         },
       });

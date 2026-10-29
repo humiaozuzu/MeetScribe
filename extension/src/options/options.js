@@ -29,6 +29,7 @@ async function load() {
   $('#tr').value = s.translationTarget;
   $('#endpoint').value = s.maxEndpointDelayMs;
   $('#recMic').checked = s.recordMic;
+  $('#micNs').checked = s.micNoiseSuppression;
   $('#autoExport').checked = s.autoExport;
   $('#autoStop').checked = s.autoStopOnLeave;
   $('#autoStopDelay').value = s.autoStopDelaySec;
@@ -50,11 +51,12 @@ $('#terms').addEventListener('change', () => save({ contextTerms: splitList($('#
 $('#diar').addEventListener('change', () => save({ enableDiarization: $('#diar').checked }));
 $('#tr').addEventListener('change', () => save({ translationTarget: $('#tr').value }));
 $('#endpoint').addEventListener('change', () => {
-  const v = Math.min(3000, Math.max(500, Number($('#endpoint').value) || 500));
+  const v = Math.min(3000, Math.max(500, Number($('#endpoint').value) || 1000));
   $('#endpoint').value = v;
   save({ maxEndpointDelayMs: v });
 });
 $('#recMic').addEventListener('change', () => save({ recordMic: $('#recMic').checked }));
+$('#micNs').addEventListener('change', () => save({ micNoiseSuppression: $('#micNs').checked }));
 $('#micDevice').addEventListener('change', () => save({ micDeviceId: $('#micDevice').value }));
 $('#autoStop').addEventListener('change', () => save({ autoStopOnLeave: $('#autoStop').checked }));
 $('#autoStopDelay').addEventListener('change', () => {

@@ -6,17 +6,34 @@ export const DEFAULT_SETTINGS = {
   contextTerms: [],
   enableDiarization: true,
   translationTarget: '',         // '' = 不翻译；否则如 'zh' / 'en'
-  maxEndpointDelayMs: 500,
+  maxEndpointDelayMs: 1000,      // Soniox 允许 500–3000；越小越容易切碎句子、准确率略降
   micDeviceId: '',               // '' = 系统默认
+  micNoiseSuppression: false,    // 浏览器降噪会损伤语音细节，默认关；回声消除始终开启
   recordMic: true,
   autoStopOnLeave: true,         // 检测到离开 Meet / Teams 通话后自动停止
   autoStopDelaySec: 10,
   autoExport: false,             // 会议结束后自动导出到 下载/meetscribe/
   logLevel: 'info',              // 'debug' | 'info' | 'warn' | 'error'
+  settingsVersion: 2,
 };
 
+export const SETTINGS_VERSION = 2;
+
+// 已保存设置的升级（纯函数，可单元测试）。
+export function migrateSettings(saved) {
+  const s = { ...saved };
+  // v2：断句等待默认值 500 → 1000。只改仍是旧默认值的，用户自己调过的保留。
+  if ((s.settingsVersion || 1) < 2 && s.maxEndpointDelayMs === 500) s.maxEndpointDelayMs = 1000;
+  s.settingsVersion = SETTINGS_VERSION;
+  return s;
+}
+
 export async function getSettings() {
-  const { settings } = await chrome.storage.local.get('settings');
+  let { settings } = await chrome.storage.local.get('settings');
+  if (settings && (settings.settingsVersion || 1) < SETTINGS_VERSION) {
+    settings = migrateSettings(settings);
+    await chrome.storage.local.set({ settings });
+  }
   return { ...DEFAULT_SETTINGS, ...(settings || {}) };
 }
 

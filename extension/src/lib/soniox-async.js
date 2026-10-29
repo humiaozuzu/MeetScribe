@@ -2,6 +2,8 @@
 // 文档：https://soniox.com/docs/stt/async/async-transcription
 // 流程：上传文件 → 创建转写 → 轮询状态 → 取 transcript → 删除远端转写与文件。
 
+import { buildContext } from './soniox-realtime.js';
+
 export const SONIOX_API = 'https://api.soniox.com/v1';
 export const SONIOX_ASYNC_MODEL = 'stt-async-v5';
 
@@ -32,11 +34,23 @@ export async function validateKey(key) {
   return true;
 }
 
-export function buildAsyncConfig(settings, { diarization }) {
+// 这场会议实际用过的语言（开始时的 + 会议中改过的），而不是现在的默认设置。
+export function meetingLanguageHints(meeting, fallback = []) {
+  const t = meeting?.transcription || {};
+  const all = [
+    ...(t.languageChanges || []).flatMap((c) => [...(c.from || []), ...(c.languageHints || [])]),
+    ...(t.languageHints || []),
+  ];
+  const uniq = [...new Set(all)];
+  return uniq.length ? uniq : fallback;
+}
+
+export function buildAsyncConfig(settings, { diarization, languageHints = settings.languageHints, topic } = {}) {
   const cfg = { model: SONIOX_ASYNC_MODEL };
   if (diarization) cfg.enable_speaker_diarization = true;
-  if (settings.languageHints?.length) cfg.language_hints = settings.languageHints;
-  if (settings.contextTerms?.length) cfg.context = { terms: settings.contextTerms };
+  if (languageHints?.length) cfg.language_hints = languageHints;
+  const context = buildContext(settings, topic);
+  if (context) cfg.context = context;
   return cfg;
 }
 

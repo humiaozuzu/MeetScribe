@@ -5,7 +5,8 @@
 
 import { getMeeting, updateMeeting, replaceSegments, addSegments } from './db.js';
 import { buildTrackBlob } from './exporter.js';
-import { transcribeBlob, buildAsyncConfig } from './soniox-async.js';
+import { transcribeBlob, buildAsyncConfig, meetingLanguageHints } from './soniox-async.js';
+import { meetingTopic } from './soniox-realtime.js';
 import { tokensToSegments } from './transcript.js';
 
 const SOURCE_NAMES = { them: '对方', me: '我' };
@@ -38,7 +39,12 @@ export async function runRetranscribe({ meetingId, source, mode, settings, log, 
 
   const prev = (meeting.jobs || []).find((j) => j.source === source && j.status === 'running' && j.mode === mode);
   const resume = prev ? { fileId: prev.fileId, transcriptionId: prev.transcriptionId } : {};
-  jlog.info('retranscribe start', { blobSize: blob.size, gaps, resume });
+  const config = buildAsyncConfig(settings, {
+    diarization: source === 'them' && settings.enableDiarization,
+    languageHints: meetingLanguageHints(meeting, settings.languageHints),
+    topic: meetingTopic(meeting.title),
+  });
+  jlog.info('retranscribe start', { blobSize: blob.size, gaps, resume, config });
   await saveJob(meetingId, source, { mode, status: 'running', startedAt: prev?.startedAt || Date.now(), error: null, ...resume });
 
   try {
@@ -46,7 +52,7 @@ export async function runRetranscribe({ meetingId, source, mode, settings, log, 
       key: settings.sonioxApiKey,
       blob,
       filename: `${meetingId}-${source}.webm`,
-      config: buildAsyncConfig(settings, { diarization: source === 'them' && settings.enableDiarization }),
+      config,
       log: jlog,
       onProgress,
       signal,

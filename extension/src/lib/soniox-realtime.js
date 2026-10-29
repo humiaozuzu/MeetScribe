@@ -31,18 +31,34 @@ const PAUSE_CLOSE_AFTER_MS = 10_000;
 // 这些错误重连也没用。
 const FATAL_CODES = new Set([400, 401, 402, 403]);
 
-export function buildRealtimeConfig(settings, { diarization } = {}) {
+// 会议标题 → context.general 里的主题，帮助识别专有名词。
+// 只是会议码（Meet abc-defg-hij）或默认标题时没有信息量，返回 null。
+export function meetingTopic(title) {
+  const t = (title || '').replace(/^Meet\s+/i, '').trim();
+  if (!t || t === '会议' || /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i.test(t)) return null;
+  return t.slice(0, 200);
+}
+
+export function buildContext(settings, topic) {
+  const ctx = {};
+  if (topic) ctx.general = [{ key: 'topic', value: topic }];
+  if (settings.contextTerms?.length) ctx.terms = settings.contextTerms;
+  return Object.keys(ctx).length ? ctx : null;
+}
+
+export function buildRealtimeConfig(settings, { diarization, topic } = {}) {
   const cfg = {
     model: SONIOX_RT_MODEL,
     audio_format: 'pcm_s16le',
     sample_rate: SAMPLE_RATE,
     num_channels: 1,
     enable_endpoint_detection: true,
-    max_endpoint_delay_ms: settings.maxEndpointDelayMs || 500,
+    max_endpoint_delay_ms: settings.maxEndpointDelayMs || 1000,
   };
   if (diarization) cfg.enable_speaker_diarization = true;
   if (settings.languageHints?.length) cfg.language_hints = settings.languageHints;
-  if (settings.contextTerms?.length) cfg.context = { terms: settings.contextTerms };
+  const context = buildContext(settings, topic);
+  if (context) cfg.context = context;
   if (settings.translationTarget) cfg.translation = { type: 'one_way', target_language: settings.translationTarget };
   return cfg;
 }
