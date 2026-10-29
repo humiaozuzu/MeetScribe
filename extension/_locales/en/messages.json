@@ -1,0 +1,10 @@
+{
+  "extDescription": {
+    "message": "Live transcription for Google Meet and Microsoft Teams (Soniox). Recordings and transcripts are saved locally.",
+    "description": "Extension description shown in the Chrome Web Store and on chrome://extensions. Max 132 characters."
+  },
+  "cmdToggleRecording": {
+    "message": "Start / stop recording and transcribing the current tab",
+    "description": "Keyboard shortcut description on chrome://extensions/shortcuts."
+  }
+}

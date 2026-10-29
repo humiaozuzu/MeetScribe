@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh" data-i18n-pending>
 <head>
   <meta charset="utf-8">
-  <title>MeetScribe 历史记录</title>
+  <title data-i18n="hist.docTitle">MeetScribe 历史记录</title>
   <link rel="stylesheet" href="../ui/base.css">
   <style>
     body { height: 100vh; display: grid; grid-template-columns: 300px 1fr; grid-template-rows: auto 1fr; }
@@ -35,17 +35,17 @@
 </head>
 <body>
   <div class="topbar">
-    <h1>历史记录</h1>
+    <h1 data-i18n="common.history">历史记录</h1>
     <span class="faint" id="storage"></span>
-    <button id="exportAll">导出全部</button>
-    <button id="exportLogs">导出日志</button>
-    <button class="link" id="options">设置</button>
+    <button id="exportAll" data-i18n="hist.exportAll">导出全部</button>
+    <button id="exportLogs" data-i18n="hist.exportLogs">导出日志</button>
+    <button class="link" id="options" data-i18n="common.options">设置</button>
   </div>
   <aside>
-    <div class="search"><input id="q" type="search" placeholder="搜索标题或内容"></div>
+    <div class="search"><input id="q" type="search" placeholder="搜索标题或内容" data-i18n-placeholder="hist.search"></div>
     <div id="meetings"></div>
   </aside>
-  <section id="detail"><div class="empty">选择左侧的一场会议</div></section>
+  <section id="detail"><div class="empty" data-i18n="hist.selectHint">选择左侧的一场会议</div></section>
   <script type="module" src="history.js"></script>
 </body>
 </html>

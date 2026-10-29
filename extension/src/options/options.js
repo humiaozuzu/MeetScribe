@@ -5,9 +5,11 @@ import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
 import { exportLogs } from '../lib/exporter.js';
 import { clearLogs } from '../lib/db.js';
 import { formatBytes } from '../lib/format.js';
+import { initI18n, t } from '../ui/i18n.js';
 
 const log = createLogger('options');
 installGlobalErrorHandlers(log);
+await initI18n(log);
 
 let toastTimer;
 function toast(text, cls = 'info') {
@@ -22,6 +24,7 @@ const splitList = (s, sep) => s.split(sep).map((x) => x.trim()).filter(Boolean);
 
 async function load() {
   const s = await getSettings();
+  $('#uiLang').value = s.uiLanguage;
   $('#key').value = s.sonioxApiKey;
   $('#langs').value = s.languageHints.join(', ');
   $('#terms').value = s.contextTerms.join('\n');
@@ -36,15 +39,20 @@ async function load() {
   $('#logLevel').value = s.logLevel;
   await refreshMic(s.micDeviceId);
   const est = await navigator.storage.estimate().catch(() => null);
-  if (est) $('#storage').textContent = `本地占用 ${formatBytes(est.usage)}`;
+  if (est) $('#storage').textContent = t('common.storageUsage', { size: formatBytes(est.usage) });
 }
 
-async function save(patch, label = '已保存') {
+async function save(patch, label = t('opt.saved')) {
   const next = await saveSettings(patch);
   log.info('settings saved', { changed: Object.keys(patch), settings: redactSettings(next) });
   toast(label);
 }
 
+// 界面语言改了就重新加载本页；其它已打开的页面下次打开时生效
+$('#uiLang').addEventListener('change', async () => {
+  await save({ uiLanguage: $('#uiLang').value });
+  location.reload();
+});
 $('#key').addEventListener('change', () => save({ sonioxApiKey: $('#key').value.trim() }));
 $('#langs').addEventListener('change', () => save({ languageHints: splitList($('#langs').value, /[,，\s]+/) }));
 $('#terms').addEventListener('change', () => save({ contextTerms: splitList($('#terms').value, /\n/) }));
@@ -70,22 +78,22 @@ $('#logLevel').addEventListener('change', () => save({ logLevel: $('#logLevel').
 $('#toggleKey').addEventListener('click', () => {
   const k = $('#key');
   k.type = k.type === 'password' ? 'text' : 'password';
-  $('#toggleKey').textContent = k.type === 'password' ? '显示' : '隐藏';
+  $('#toggleKey').textContent = t(k.type === 'password' ? 'opt.show' : 'opt.hide');
 });
 
 $('#testKey').addEventListener('click', async () => {
   const key = $('#key').value.trim();
   const out = $('#keyResult');
-  if (!key) { out.textContent = '请先填写 key'; return; }
+  if (!key) { out.textContent = t('opt.keyEmpty'); return; }
   await save({ sonioxApiKey: key });
-  out.textContent = '测试中…';
+  out.textContent = t('opt.keyTesting');
   try {
     await validateKey(key);
-    out.textContent = '✓ key 有效';
+    out.textContent = t('opt.keyOk');
     out.style.color = 'var(--ok)';
     log.info('api key test ok');
   } catch (e) {
-    out.textContent = `✗ ${e.status === 401 ? 'key 无效' : e.message}`;
+    out.textContent = `✗ ${e.status === 401 ? t('opt.keyInvalid') : e.message}`;
     out.style.color = 'var(--danger)';
     log.warn('api key test failed', { status: e.status, message: e.message });
   }
@@ -97,13 +105,13 @@ async function refreshMic(selectedId) {
   const state = await permissionState('microphone');
   const chip = $('#micState');
   chip.className = `chip ${state === 'granted' ? 'ok' : 'warn'}`;
-  chip.textContent = { granted: '已授权', denied: '已拒绝（请在浏览器设置里允许）', prompt: '未授权' }[state] || state;
+  chip.textContent = { granted: t('opt.micGranted'), denied: t('opt.micDenied'), prompt: t('opt.micPrompt') }[state] || state;
   $('#grantMic').classList.toggle('hidden', state === 'granted');
   if (state !== 'granted') return;
   const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput');
   const sel = $('#micDevice');
   const cur = selectedId ?? sel.value;
-  sel.replaceChildren(el('option', { value: '', text: '系统默认' }),
+  sel.replaceChildren(el('option', { value: '', text: t('opt.micDefault') }),
     ...devices.filter((d) => d.deviceId !== 'default').map((d) => el('option', { value: d.deviceId, text: d.label || d.deviceId })));
   sel.value = devices.some((d) => d.deviceId === cur) ? cur : '';
 }
@@ -113,10 +121,10 @@ $('#grantMic').addEventListener('click', async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     stream.getTracks().forEach((t) => t.stop());
     log.info('microphone permission granted');
-    toast('麦克风已授权');
+    toast(t('opt.micGrantedToast'));
   } catch (e) {
     log.warn('microphone permission failed', { name: e.name, message: e.message });
-    toast(`授权失败：${e.name}`, 'err');
+    toast(t('opt.grantFailed', { name: e.name }), 'err');
   }
   refreshMic();
 });
@@ -129,17 +137,17 @@ async function doExportLogs(fromTs, label) {
   try {
     const settings = await getSettings();
     await exportLogs({ fromTs, label, meta: { settings: redactSettings(settings) } });
-    toast('日志已导出到 下载/meetscribe/logs/');
+    toast(t('opt.logsExported'));
   } catch (e) {
-    toast(`导出失败：${e.message}`, 'err');
+    toast(t('common.exportFailed', { msg: e.message }), 'err');
   }
 }
 $('#logs24h').addEventListener('click', () => doExportLogs(Date.now() - 86400e3, '24h'));
 $('#logsAll').addEventListener('click', () => doExportLogs(0, 'all'));
 $('#logsClear').addEventListener('click', async () => {
-  if (!confirm('清空所有日志？')) return;
+  if (!confirm(t('opt.clearConfirm'))) return;
   await clearLogs();
-  toast('日志已清空');
+  toast(t('opt.logsCleared'));
 });
 
 load().catch((e) => log.error('options load failed', e));

@@ -66,7 +66,7 @@ export async function transcribeBlob({ key, blob, filename, config, log, onProgr
   try {
     if (!transcriptionId) {
       if (!fileId) {
-        onProgress?.(`上传录音（${Math.round(blob.size / 1024 / 1024 * 10) / 10} MB）…`);
+        onProgress?.(`Uploading audio (${Math.round(blob.size / 1024 / 1024 * 10) / 10} MB)…`);
         const form = new FormData();
         form.append('file', blob, filename);
         const t0 = Date.now();
@@ -91,14 +91,14 @@ export async function transcribeBlob({ key, blob, filename, config, log, onProgr
       }
       if (st.status === 'error') {
         await cleanup(key, { fileId, transcriptionId }, log);
-        throw new Error(`转写失败：${st.error_type || ''} ${st.error_message || ''}`);
+        throw new Error(`transcription failed: ${st.error_type || ''} ${st.error_message || ''}`);
       }
-      onProgress?.(st.status === 'queued' ? '排队中…' : `转写中…（已等待 ${Math.round((Date.now() - t0) / 1000)}s）`);
+      onProgress?.(st.status === 'queued' ? 'Queued…' : `Transcribing… (${Math.round((Date.now() - t0) / 1000)}s)`);
       await sleep(delay, signal);
       delay = Math.min(delay * 1.5, 10_000);
     }
 
-    onProgress?.('下载结果…');
+    onProgress?.('Downloading result…');
     const transcript = await api(key, `/transcriptions/${transcriptionId}/transcript`, { signal });
     await cleanup(key, { fileId, transcriptionId }, log);
     return transcript.tokens || [];

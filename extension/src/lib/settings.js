@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS = {
   autoStopDelaySec: 10,
   autoExport: false,             // 会议结束后自动导出到 下载/meetscribe/
   logLevel: 'info',              // 'debug' | 'info' | 'warn' | 'error'
+  uiLanguage: '',                // 界面语言：'' = 跟随浏览器（不支持时用中文）；'zh' | 'ja' | 'en'
   settingsVersion: 2,
 };
 

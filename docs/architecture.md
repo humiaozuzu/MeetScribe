@@ -17,7 +17,7 @@
 | Popup | `src/popup/*` | While open | Choose languages, start/stop |
 | Side panel | `src/sidepanel/*` | While open | Live captions, status, levels, language switch, auto-stop countdown |
 | History | `src/history/*` | Tab | List, search, synced playback, retranscribe, export, delete |
-| Options | `src/options/*` | Tab | Key, languages, vocabulary, microphone permission/device, auto stop/export, log level and export |
+| Options | `src/options/*` | Tab | UI language, key, languages, vocabulary, microphone permission/device, auto stop/export, log level and export |
 
 ## Start sequence
 
@@ -117,6 +117,16 @@ content script: mic button state  (poll 500 ms; "unknown" needs ~2 s of misses)
 Signals used: Meet, the `[data-is-muted]` element whose icon text is `mic`/`mic_off` or whose `aria-label` names the microphone (the camera button also has `data-is-muted`). Teams, `#microphone-button` `data-state` (`mic` / `mic-off`).
 
 Signals used: Meet `[jsname="CQylAd"]` or a leaf element inside a button whose text is `call_end` (Material icon). Teams `#hangup-button` or `data-tid*="hangup"`. These are language-independent, but they depend on how Meet and Teams build their pages.
+
+## UI language (i18n)
+
+The extension pages (popup, side panel, history, options) are translated into Chinese, Japanese and English with an in-repo string table, not Chrome `_locales`, so the user can pick the language independently of the browser.
+
+- `src/lib/strings.js`: one table per language (`zh`, `ja`, `en`). `zh` is the reference; `tests/i18n.test.mjs` fails if another language is missing a key or has different `{placeholders}`, or if a page uses a key that does not exist.
+- `src/lib/i18n.js` (pure): `resolveUiLang(setting, navigator.languages)` picks the setting if supported, else the first supported browser language (base tag only, so `zh-TW` → `zh`), else `zh`. `t(key, params)` looks up the current language, then `zh`, then returns the key.
+- `src/ui/i18n.js`: `initI18n()` reads `settings.uiLanguage` (`''` = follow browser), sets `<html lang>`, and fills elements marked `data-i18n` (text), `data-i18n-placeholder` and `data-i18n-title`. Each page awaits it at module top level before rendering. HTML keeps the Chinese text as a fallback; `<html data-i18n-pending>` hides the body until translation is done (CSS reveals it after 1 s regardless).
+- Changing the language on the options page reloads that page. Other open pages switch the next time they open (the history page is not reloaded because it may be running a retranscription job).
+- Not translated: program-level text is English, like logs. That covers `Error` messages thrown in `src/lib`, the service worker and the offscreen document (pages show them after a translated prefix, e.g. 开始失败：a meeting is already being recorded), and retranscription progress from `soniox-async.js`. Exported files are English regardless of UI language: `transcript.md` (headings, `Me` / `Others` / `Speaker N`) and `them.webm` / `me.webm`. The manifest description and shortcut description are localized separately with Chrome `_locales` (`extension/_locales/{en,zh_CN,ja}/messages.json`, `default_locale: en`, referenced as `__MSG_key__`). Chrome picks them from the browser language, not from the MeetScribe UI language setting. The name `MeetScribe` is not translated.
 
 ## Storage (IndexedDB `meetscribe`, v1)
 

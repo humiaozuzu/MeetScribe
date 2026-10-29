@@ -1,0 +1,8 @@
+{
+  "extDescription": {
+    "message": "Google Meet / Microsoft Teams のリアルタイム文字起こし（Soniox）。録音と字幕はローカルに保存します。"
+  },
+  "cmdToggleRecording": {
+    "message": "現在のタブの録音・文字起こしを開始 / 停止"
+  }
+}

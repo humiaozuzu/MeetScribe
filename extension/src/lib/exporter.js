@@ -5,9 +5,8 @@ import { buildMarkdown, meetingFolderName } from './format.js';
 import { buildLogExport } from './log.js';
 
 const ROOT = 'meetscribe';
-const SOURCE_NAMES = { them: '对方', me: '我' };
 
-// 同一场会议重复导出时覆盖旧文件（内容相同），不再生成 "对方 (1).webm"
+// 同一场会议重复导出时覆盖旧文件（内容相同），不再生成 "them (1).webm"
 export async function downloadBlob(blob, filename, conflictAction = 'overwrite') {
   const url = URL.createObjectURL(blob);
   try {
@@ -43,21 +42,22 @@ export async function buildTrackBlob(meetingId, source) {
 
 export async function exportMeeting(meetingId, { audio = true, markdown = true, log } = {}) {
   const meeting = await getMeeting(meetingId);
-  if (!meeting) throw new Error('会议不存在');
+  if (!meeting) throw new Error('meeting not found');
   const folder = `${ROOT}/${meetingFolderName(meeting)}`;
   const files = [];
   if (markdown) {
     const segs = await getSegments(meetingId);
     const md = buildMarkdown(meeting, segs);
-    await downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), `${folder}/记录.md`);
-    files.push('记录.md');
+    await downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), `${folder}/transcript.md`);
+    files.push('transcript.md');
   }
   if (audio) {
     for (const source of ['them', 'me']) {
       const blob = await buildTrackBlob(meetingId, source);
       if (!blob) continue;
-      await downloadBlob(blob, `${folder}/${SOURCE_NAMES[source]}.webm`);
-      files.push(`${SOURCE_NAMES[source]}.webm`);
+      // 文件名用来源 id：them.webm（对方）/ me.webm（我）
+      await downloadBlob(blob, `${folder}/${source}.webm`);
+      files.push(`${source}.webm`);
     }
   }
   log?.info('meeting exported', { meetingId, folder, files });

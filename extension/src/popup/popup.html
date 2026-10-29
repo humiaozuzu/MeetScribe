@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh" data-i18n-pending>
 <head>
   <meta charset="utf-8">
   <title>MeetScribe</title>
@@ -23,25 +23,25 @@
   <section id="idle" class="stack hidden">
     <div class="tab"><div class="title" id="tabTitle"></div><div class="faint" id="tabUrl"></div></div>
     <div id="warnings" class="stack"></div>
-    <div><div class="faint">会议语言</div><div id="langs"></div></div>
-    <button id="start" class="primary big">开始录音转写</button>
-    <div class="faint">快捷键：⌘/Ctrl + Shift + Y</div>
+    <div><div class="faint" data-i18n="popup.meetingLangs">会议语言</div><div id="langs"></div></div>
+    <button id="start" class="primary big" data-i18n="popup.start">开始录音转写</button>
+    <div class="faint" data-i18n="popup.shortcut">快捷键：⌘/Ctrl + Shift + Y</div>
   </section>
 
   <section id="recording" class="stack hidden">
     <div class="tab"><div class="title" id="recTitle"></div><div class="timer" id="timer">00:00</div></div>
     <div id="recWarnings" class="stack"></div>
     <div class="row">
-      <button id="openPanel">打开字幕</button>
-      <button id="stop" class="danger">停止</button>
+      <button id="openPanel" data-i18n="popup.openPanel">打开字幕</button>
+      <button id="stop" class="danger" data-i18n="common.stop">停止</button>
     </div>
   </section>
 
   <div id="error" class="notice err hidden"></div>
 
   <footer>
-    <button class="link" id="history">历史记录</button>
-    <button class="link" id="options">设置</button>
+    <button class="link" id="history" data-i18n="common.history">历史记录</button>
+    <button class="link" id="options" data-i18n="common.options">设置</button>
   </footer>
   <script type="module" src="popup.js"></script>
 </body>

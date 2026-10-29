@@ -23,9 +23,10 @@ export function formatBytes(n) {
   return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 }
 
+// 导出文件里的说话人（英文，不随界面语言变）；界面上用 ui/common.js 的 speakerName。
 export function speakerLabel(seg) {
-  if (seg.source === 'me') return '我';
-  return seg.speaker ? `对方 ${seg.speaker}` : '对方';
+  if (seg.source === 'me') return 'Me';
+  return seg.speaker ? `Speaker ${seg.speaker}` : 'Others';
 }
 
 // 去掉会议页面标题里的产品后缀，例如 "Meet - abc-defg-hij" / "xxx | Microsoft Teams"。
@@ -46,20 +47,20 @@ export function meetingFolderName(meeting) {
 
 export function buildMarkdown(meeting, segments) {
   const lines = [];
-  lines.push(`# ${meeting.title || '会议'}`);
+  lines.push(`# ${meeting.title || 'Meeting'}`);
   lines.push('');
-  lines.push(`- 时间：${formatDateTime(meeting.startedAt)}${meeting.endedAt ? ` – ${formatDateTime(meeting.endedAt)}` : ''}`);
-  if (meeting.endedAt) lines.push(`- 时长：${formatClock(meeting.endedAt - meeting.startedAt)}`);
-  if (meeting.url) lines.push(`- 链接：${meeting.url}`);
+  lines.push(`- Time: ${formatDateTime(meeting.startedAt)}${meeting.endedAt ? ` – ${formatDateTime(meeting.endedAt)}` : ''}`);
+  if (meeting.endedAt) lines.push(`- Duration: ${formatClock(meeting.endedAt - meeting.startedAt)}`);
+  if (meeting.url) lines.push(`- Link: ${meeting.url}`);
   const gaps = meeting.gaps || [];
   if (gaps.length) {
-    lines.push(`- 转写中断：${gaps.map((g) => `${g.source === 'me' ? '我' : '对方'} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join('，')}`);
+    lines.push(`- Transcript gaps: ${gaps.map((g) => `${g.source === 'me' ? 'Me' : 'Others'} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join(', ')}`);
   }
   lines.push('');
-  lines.push('## 记录');
+  lines.push('## Transcript');
   lines.push('');
   for (const s of segments) {
-    lines.push(`**[${formatClock(s.startMs)}] ${speakerLabel(s)}**：${s.text}`);
+    lines.push(`**[${formatClock(s.startMs)}] ${speakerLabel(s)}**: ${s.text}`);
     if (s.translation) lines.push(`> ${s.translation}`);
     lines.push('');
   }

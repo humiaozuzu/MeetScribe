@@ -47,7 +47,7 @@ async function start({ meeting, streamId, settings, micMuted }) {
     });
   } catch (e) {
     log.error('tab audio capture failed', { name: e.name, message: e.message });
-    throw new Error(`无法捕获标签页音频：${e.name} ${e.message}`);
+    throw new Error(`tab audio capture failed: ${e.name} ${e.message}`);
   }
 
   const ctx = new AudioContext();

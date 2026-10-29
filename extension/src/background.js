@@ -50,7 +50,7 @@ async function ensureOffscreen() {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_URL,
       reasons: ['USER_MEDIA'],
-      justification: '捕获会议标签页与麦克风音频，用于本地录音和实时转写',
+      justification: 'Capture meeting tab and microphone audio for local recording and live transcription',
     });
   }
   for (let i = 0; i < 40; i++) {
@@ -78,9 +78,9 @@ function sendToOffscreen(msg, timeoutMs = 15000) {
 // ---------- 开始 / 停止 ----------
 
 async function startRecording(tabId, languageHints) {
-  if (busy) throw new Error('正在处理上一个操作，请稍候');
+  if (busy) throw new Error('previous start/stop still in progress');
   const { active } = await getState();
-  if (active) throw new Error('已有会议在录制中');
+  if (active) throw new Error('a meeting is already being recorded');
   busy = 'starting';
   let meeting = null;
   try {

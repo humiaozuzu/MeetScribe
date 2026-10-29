@@ -1,0 +1,8 @@
+{
+  "extDescription": {
+    "message": "Google Meet / Microsoft Teams 实时转录（Soniox），本地保存录音与字幕。"
+  },
+  "cmdToggleRecording": {
+    "message": "开始 / 停止当前标签页的录音转写"
+  }
+}

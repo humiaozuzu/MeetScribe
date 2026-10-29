@@ -24,7 +24,7 @@ There is no build step, bundler or npm dependency. To try a change, load `extens
 
 ```
 extension/
-  manifest.json
+  manifest.json                default_locale en; description strings in _locales/{en,zh_CN,ja}/messages.json
   src/background.js            service worker: start/stop, offscreen lifecycle, auto stop, state in chrome.storage.session
   src/offscreen/               hidden document that owns all audio + WebSockets
     offscreen.js               session orchestration (one meeting at a time)
@@ -40,6 +40,7 @@ extension/
     db.js                      IndexedDB stores: meetings, segments, chunks, logs
     log.js                     structured logger (console + IndexedDB), export as JSONL
     messages.js                every message type / status constant
+    i18n.js, strings.js        UI language resolution + t(); string tables for zh / ja / en
     settings.js, format.js, exporter.js
   src/popup/ sidepanel/ history/ options/   UI pages (plain HTML + ES modules)
   src/ui/                      shared CSS and DOM helpers
@@ -50,7 +51,7 @@ docs/                          architecture and troubleshooting
 ## Conventions
 
 - **Plain ES modules, no framework, no dependencies.** Keep it that way unless there is a strong reason. The content script is the exception: Chrome loads content scripts as classic scripts, so `meeting-watch.js` cannot `import` and guards against double injection with `window.__meetscribeWatch`.
-- **UI strings are Chinese.** Code comments are mostly Chinese too. Match the surrounding file. Log messages and identifiers are English, so logs are greppable.
+- **UI strings go through i18n.** Pages support Chinese, Japanese and English (setting `uiLanguage`, `''` = follow the browser, fallback Chinese). Add every new UI string to all three tables in `src/lib/strings.js` and use it via `t('key', { params })` in JS or `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` in HTML (keep the Chinese text in the HTML as fallback). Pages call `await initI18n(log)` from `src/ui/i18n.js` before rendering. `npm test` checks that all languages have the same keys and placeholders. Code comments are mostly Chinese; match the surrounding file. Log messages, identifiers, thrown `Error` messages and other program-level text (status/progress from `src/lib`, the service worker and offscreen) are English, so logs are greppable; pages add a translated prefix when they show them. See "UI language" in `docs/architecture.md`.
 - **Message types live in `src/lib/messages.js`.** Add new ones there, never as string literals elsewhere. Commands carry `target: 'sw'` or `target: 'offscreen'`. Every `onMessage` listener must return `false` for messages it does not handle, or it will swallow other listeners' responses.
 - **Pure logic goes in `src/lib/` with a unit test.** Anything that can run without Chrome APIs (token assembly, time math, formatting, reconnection/gap logic with a fake WebSocket) should be testable from Node.
 - **Recording must never depend on the network.** Any change to the transcription path must keep the MediaRecorder branch independent and unaffected.

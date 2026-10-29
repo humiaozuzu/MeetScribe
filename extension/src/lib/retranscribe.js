@@ -9,7 +9,6 @@ import { transcribeBlob, buildAsyncConfig, meetingLanguageHints } from './soniox
 import { meetingTopic } from './soniox-realtime.js';
 import { tokensToSegments } from './transcript.js';
 
-const SOURCE_NAMES = { them: '对方', me: '我' };
 
 export function openGaps(meeting, source) {
   return (meeting.gaps || []).filter((g) => (!source || g.source === source) && !g.filled);
@@ -28,11 +27,11 @@ async function saveJob(meetingId, source, patch) {
 export async function runRetranscribe({ meetingId, source, mode, settings, log, onProgress, signal }) {
   const jlog = log.child({ meetingId, source, mode });
   const meeting = await getMeeting(meetingId);
-  if (!meeting) throw new Error('会议不存在');
-  if (!settings.sonioxApiKey) throw new Error('请先在设置里填写 Soniox API key');
+  if (!meeting) throw new Error('meeting not found');
+  if (!settings.sonioxApiKey) throw new Error('no Soniox API key');
   const track = meeting.tracks?.[source];
   const blob = await buildTrackBlob(meetingId, source);
-  if (!blob) throw new Error(`没有「${SOURCE_NAMES[source]}」的录音`);
+  if (!blob) throw new Error(`no recording for source "${source}"`);
 
   const gaps = mode === 'gaps' ? openGaps(meeting, source) : null;
   if (mode === 'gaps' && !gaps.length) return { segments: 0, skipped: true };

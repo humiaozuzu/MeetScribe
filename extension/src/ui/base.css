@@ -21,6 +21,10 @@
   --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
   color-scheme: light dark;
 }
+html:lang(ja) { --font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif; }
+/* 界面翻译完成前隐藏（见 ui/i18n.js）；脚本出错没能去掉标记时，1 秒后照样显示 */
+html[data-i18n-pending] body { visibility: hidden; animation: i18n-reveal 0s 1s forwards; }
+@keyframes i18n-reveal { to { visibility: visible; } }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #17191c;
@@ -73,6 +77,24 @@ textarea { resize: vertical; }
 .notice.err { background: var(--danger-soft); color: var(--danger); }
 .notice.info { background: var(--accent-soft); color: var(--accent); }
 .hidden { display: none !important; }
+.block { display: block; }
+
+/* 表单布局（设置页） */
+.card { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+.card > h2 { font-size: 15px; margin: 0 0 14px; }
+.card > :last-child { margin-bottom: 0; }
+.field { display: grid; gap: 4px; margin-bottom: 14px; min-width: 0; }
+.field > label, .inline-field > label { font-weight: 600; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inline-field { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.check { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; cursor: pointer; }
+.check > input { margin: 4px 0 0; flex: none; }
+.check .faint { margin-top: 2px; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 20px; }
+.sub { margin: -4px 0 14px 24px; display: grid; gap: 4px; }
+input[type=number] { width: 7em; }
+select { max-width: 100%; }
+.field > select { justify-self: start; min-width: 12em; }
 
 /* 字幕片段（侧边栏与历史页共用） */
 .seg { padding: 6px 10px; border-left: 3px solid transparent; border-radius: 4px; }
@@ -87,6 +109,8 @@ textarea { resize: vertical; }
 .seg .tr { color: var(--text-soft); font-size: 13px; margin-top: 2px; }
 .seg .pending { color: var(--text-faint); }
 .seg.async .meta::after { content: '补转'; font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+html:lang(ja) .seg.async .meta::after { content: '補完'; }
+html:lang(en) .seg.async .meta::after { content: 'filled'; }
 .lang-picker { display: flex; flex-wrap: wrap; gap: 4px; }
 .lang-picker button { padding: 2px 10px; border-radius: 999px; font-size: 13px; color: var(--text-soft); }
 .lang-picker button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }

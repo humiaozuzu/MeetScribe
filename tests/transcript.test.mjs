@@ -87,7 +87,9 @@ test('format helpers', () => {
     { title: 'T', startedAt: 0, endedAt: 60_000, gaps: [{ source: 'them', startMs: 0, endMs: 5000 }] },
     [{ source: 'me', startMs: 1000, text: '你好' }, { source: 'them', speaker: '2', startMs: 2000, text: 'hi', translation: '嗨' }],
   );
-  assert.match(md, /\*\*\[00:01\] 我\*\*：你好/);
-  assert.match(md, /\*\*\[00:02\] 对方 2\*\*：hi\n> 嗨/);
-  assert.match(md, /转写中断：对方 00:00–00:05/);
+  assert.match(md, /\*\*\[00:01\] Me\*\*: 你好/);
+  assert.match(md, /\*\*\[00:02\] Speaker 2\*\*: hi\n> 嗨/);
+  assert.match(md, /Transcript gaps: Others 00:00–00:05/);
+  assert.match(md, /^# T\n\n- Time: .*\n- Duration: 01:00\n/);
+  assert.match(md, /## Transcript/);
 });

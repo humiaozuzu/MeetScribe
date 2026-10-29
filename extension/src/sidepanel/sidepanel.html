@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh" data-i18n-pending>
 <head>
   <meta charset="utf-8">
-  <title>MeetScribe 字幕</title>
+  <title data-i18n="sp.docTitle">MeetScribe 字幕</title>
   <link rel="stylesheet" href="../ui/base.css">
   <style>
     body { height: 100vh; display: flex; flex-direction: column; }
@@ -32,17 +32,17 @@
       <span class="timer" id="timer"></span>
     </div>
     <div class="sources" id="sources"></div>
-    <div class="langs hidden" id="langRow"><span class="faint">语言</span><span id="langs"></span><span class="faint" id="langNote"></span></div>
+    <div class="langs hidden" id="langRow"><span class="faint" data-i18n="sp.langs">语言</span><span id="langs"></span><span class="faint" id="langNote"></span></div>
   </header>
   <div id="notices"></div>
-  <main id="list"><div class="empty" id="empty">未在录制。点浏览器工具栏里的扩展图标开始。</div></main>
+  <main id="list"><div class="empty" id="empty" data-i18n="sp.notRecording">未在录制。点浏览器工具栏里的扩展图标开始。</div></main>
   <div class="live" id="live"></div>
-  <button id="jump" class="hidden">↓ 最新</button>
+  <button id="jump" class="hidden" data-i18n="sp.jump">↓ 最新</button>
   <footer>
-    <button id="stop" class="danger hidden">停止</button>
+    <button id="stop" class="danger hidden" data-i18n="common.stop">停止</button>
     <span class="spacer"></span>
-    <button class="link" id="history">历史</button>
-    <button class="link" id="options">设置</button>
+    <button class="link" id="history" data-i18n="common.historyShort">历史</button>
+    <button class="link" id="options" data-i18n="common.options">设置</button>
   </footer>
   <script type="module" src="sidepanel.js"></script>
 </body>

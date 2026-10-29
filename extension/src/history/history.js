@@ -1,6 +1,6 @@
 // 历史页：会议列表、搜索、回放（字幕跟随）、补转 / 整场重转、导出、删除。
 
-import { $, el, renderSegment } from '../ui/common.js';
+import { $, el, renderSegment, sourceName } from '../ui/common.js';
 import { listMeetings, getMeeting, getSegments, updateMeeting, deleteMeeting } from '../lib/db.js';
 import { formatClock, formatDateTime, formatBytes } from '../lib/format.js';
 import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
@@ -9,11 +9,12 @@ import { runRetranscribe, openGaps } from '../lib/retranscribe.js';
 import { getSettings, redactSettings } from '../lib/settings.js';
 import { EVT } from '../lib/messages.js';
 import { langPicker, langNames } from '../ui/langs.js';
+import { initI18n, t } from '../ui/i18n.js';
 
 const log = createLogger('history');
 installGlobalErrorHandlers(log);
+await initI18n(log);
 
-const SOURCE_NAMES = { them: '对方', me: '我' };
 let meetings = [];
 let selectedId = null;
 let player = null;
@@ -28,12 +29,12 @@ function meetingDuration(m) {
 
 function meetingChips(m) {
   const chips = [];
-  if (m.status === 'recording') chips.push(el('span', { class: 'chip err', text: '录制中' }));
-  if (m.status === 'interrupted') chips.push(el('span', { class: 'chip warn', text: '异常中断' }));
+  if (m.status === 'recording') chips.push(el('span', { class: 'chip err', text: t('hist.recording') }));
+  if (m.status === 'interrupted') chips.push(el('span', { class: 'chip warn', text: t('hist.interruptedChip') }));
   const gaps = openGaps(m).length;
-  if (gaps) chips.push(el('span', { class: 'chip warn', text: `${gaps} 处缺口` }));
-  if (m.retranscribed) chips.push(el('span', { class: 'chip ok', text: '已整场重转' }));
-  if (m.transcription && !m.transcription.enabled) chips.push(el('span', { class: 'chip', text: '仅录音' }));
+  if (gaps) chips.push(el('span', { class: 'chip warn', text: t('hist.gapsChip', { n: gaps }) }));
+  if (m.retranscribed) chips.push(el('span', { class: 'chip ok', text: t('hist.retranscribedChip') }));
+  if (m.transcription && !m.transcription.enabled) chips.push(el('span', { class: 'chip', text: t('status.off') }));
   return chips;
 }
 
@@ -56,11 +57,11 @@ async function renderList() {
   const box = $('#meetings');
   box.replaceChildren();
   const shown = meetings.filter((m) => !q || (textCache.get(m.id) || m.title.toLowerCase()).includes(q));
-  if (!shown.length) box.append(el('div', { class: 'empty', text: q ? '没有匹配的会议' : '还没有会议记录' }));
+  if (!shown.length) box.append(el('div', { class: 'empty', text: q ? t('hist.noMatch') : t('hist.noMeetings') }));
   for (const m of shown) {
     const d = meetingDuration(m);
     box.append(el('div', { class: `m-item ${m.id === selectedId ? 'sel' : ''}`, onclick: () => select(m.id) },
-      el('div', { class: 't', text: m.title || '会议' }),
+      el('div', { class: 't', text: m.title || t('common.meeting') }),
       el('div', { class: 's' },
         el('span', { class: 'faint', text: `${formatDateTime(m.startedAt)}${d ? ` · ${formatClock(d)}` : ''}` }),
         ...meetingChips(m))));
@@ -157,7 +158,7 @@ async function renderDetail() {
   player = null;
   const box = $('#detail');
   const meeting = await getMeeting(selectedId);
-  if (!meeting) { box.replaceChildren(el('div', { class: 'empty', text: '会议不存在' })); return; }
+  if (!meeting) { box.replaceChildren(el('div', { class: 'empty', text: t('hist.notFound') })); return; }
   const segs = await getSegments(meeting.id);
   const live = meeting.status === 'recording';
 
@@ -168,77 +169,77 @@ async function renderDetail() {
   });
 
   const tracks = meeting.tracks || {};
-  const trackInfo = Object.entries(tracks).map(([k, t]) => `${SOURCE_NAMES[k]} ${formatBytes(t.bytes)}`).join(' · ');
+  const trackInfo = Object.entries(tracks).map(([k, track]) => `${sourceName(k)} ${formatBytes(track.bytes)}`).join(' · ');
   const meta = el('div', { class: 'faint', text: [
     formatDateTime(meeting.startedAt),
-    meetingDuration(meeting) ? `时长 ${formatClock(meetingDuration(meeting))}` : null,
+    meetingDuration(meeting) ? t('hist.duration', { d: formatClock(meetingDuration(meeting)) }) : null,
     trackInfo || null,
-    meeting.transcription?.enabled ? `实时模型 ${meeting.transcription.model}` : '未实时转写',
+    meeting.transcription?.enabled ? t('hist.rtModel', { model: meeting.transcription.model }) : t('hist.noRealtime'),
   ].filter(Boolean).join(' · ') });
 
   const tr = meeting.transcription || {};
   const changes = tr.languageChanges || [];
   const initialLangs = changes.length ? changes[0].from : tr.languageHints;
-  const langInfo = el('div', { class: 'faint', text: `会议语言：${langNames(initialLangs)}${
-    changes.map((c) => `，${formatClock(c.atMs)} 改为 ${langNames(c.languageHints)}`).join('')}` });
+  const langInfo = el('div', { class: 'faint', text: t('hist.langInfo', { langs: langNames(initialLangs) })
+    + changes.map((c) => t('hist.langChange', { time: formatClock(c.atMs), langs: langNames(c.languageHints) })).join('') });
   let retransLangs = tr.languageHints || (await getSettings()).languageHints;
-  const retransPicker = el('div', { class: 'row-inline' }, el('span', { class: 'faint', text: '重转语言' }),
+  const retransPicker = el('div', { class: 'row-inline' }, el('span', { class: 'faint', text: t('hist.retransLangs') }),
     langPicker(retransLangs, (next) => { retransLangs = next; }, { disabled: live }));
 
   const notices = el('div', { class: 'gaps' });
-  if (live) notices.append(el('div', { class: 'notice info', text: '这场会议正在录制，实时字幕请看侧边栏；结束后可在这里补转、导出。' }));
-  if (meeting.status === 'interrupted') notices.append(el('div', { class: 'notice warn', text: '录制异常中断（浏览器关闭或扩展崩溃），已保存的录音仍可回放和补转。' }));
-  if (meeting.micError) notices.append(el('div', { class: 'notice warn', text: `当时麦克风不可用：${meeting.micError}` }));
+  if (live) notices.append(el('div', { class: 'notice info', text: t('hist.liveNotice') }));
+  if (meeting.status === 'interrupted') notices.append(el('div', { class: 'notice warn', text: t('hist.interrupted') }));
+  if (meeting.micError) notices.append(el('div', { class: 'notice warn', text: t('hist.micErrorThen', { err: meeting.micError }) }));
   const gaps = openGaps(meeting);
   if (gaps.length) {
-    notices.append(el('div', { class: 'notice warn', text: `转写缺口：${gaps.map((g) => `${SOURCE_NAMES[g.source]} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join('，')}` }));
+    notices.append(el('div', { class: 'notice warn', text: t('hist.gaps', { list: gaps.map((g) => `${sourceName(g.source)} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join(t('hist.listSep')) }) }));
   }
   for (const j of meeting.jobs || []) {
     const key = `${meeting.id}:${j.source}`;
-    if (runningJobs.has(key)) notices.append(el('div', { class: 'notice info', text: `${SOURCE_NAMES[j.source]}：${runningJobs.get(key)}` }));
-    else if (j.status === 'running') notices.append(el('div', { class: 'notice warn' }, `${SOURCE_NAMES[j.source]}：上次的补转任务未完成。`,
-      el('button', { class: 'link', text: '继续', onclick: () => startJob(meeting.id, j.source, j.mode) })));
-    else if (j.status === 'error') notices.append(el('div', { class: 'notice err', text: `${SOURCE_NAMES[j.source]} 补转失败：${j.error}` }));
+    if (runningJobs.has(key)) notices.append(el('div', { class: 'notice info', 'data-job': key, text: t('hist.jobProgress', { src: sourceName(j.source), text: runningJobs.get(key) }) }));
+    else if (j.status === 'running') notices.append(el('div', { class: 'notice warn' }, t('hist.jobUnfinished', { src: sourceName(j.source) }),
+      el('button', { class: 'link', text: t('hist.continue'), onclick: () => startJob(meeting.id, j.source, j.mode) })));
+    else if (j.status === 'error') notices.append(el('div', { class: 'notice err', text: t('hist.jobFailed', { src: sourceName(j.source), err: j.error }) }));
   }
 
   const busy = [...runningJobs.keys()].some((k) => k.startsWith(meeting.id));
   const hasTrack = (s) => !!tracks[s]?.chunks;
   const actions = el('div', { class: 'actions' },
-    gaps.length ? el('button', { class: 'primary', disabled: live || busy, text: '补转缺口', title: '用录音补齐转写中断的部分',
+    gaps.length ? el('button', { class: 'primary', disabled: live || busy, text: t('hist.fillGaps'), title: t('hist.fillGapsTitle'),
       onclick: () => runForSources(meeting, [...new Set(gaps.map((g) => g.source))], 'gaps', retransLangs) }) : null,
-    el('button', { disabled: live || busy, text: '整场重转', title: '用 Soniox 异步接口重新转写整场录音（替换当前字幕，通常更准）',
+    el('button', { disabled: live || busy, text: t('hist.retranscribe'), title: t('hist.retranscribeTitle'),
       onclick: () => {
-        if (!confirm('用整场录音重新转写，会替换当前字幕。继续？')) return;
+        if (!confirm(t('hist.retranscribeConfirm'))) return;
         runForSources(meeting, ['them', 'me'].filter(hasTrack), 'full', retransLangs);
       } }),
-    el('button', { disabled: live, text: '导出 Markdown', onclick: () => doExport(meeting.id, { audio: false }) }),
-    el('button', { disabled: live, text: '导出录音', onclick: () => doExport(meeting.id, { markdown: false }) }),
-    el('button', { text: '导出本场日志', onclick: () => exportMeetingLogs(meeting) }),
-    el('button', { class: 'danger', disabled: live || busy, text: '删除', onclick: () => removeMeeting(meeting) }),
+    el('button', { disabled: live, text: t('hist.exportMd'), onclick: () => doExport(meeting.id, { audio: false }) }),
+    el('button', { disabled: live, text: t('hist.exportAudio'), onclick: () => doExport(meeting.id, { markdown: false }) }),
+    el('button', { text: t('hist.exportMeetingLogs'), onclick: () => exportMeetingLogs(meeting) }),
+    el('button', { class: 'danger', disabled: live || busy, text: t('hist.delete'), onclick: () => removeMeeting(meeting) }),
   );
 
   // 播放器
-  const playBtn = el('button', { text: '▶ 播放', disabled: true });
+  const playBtn = el('button', { text: t('hist.play'), disabled: true });
   const range = el('input', { type: 'range', min: 0, max: Math.max(1, meetingDuration(meeting) || 1), value: 0, step: 100, disabled: true });
-  const time = el('span', { class: 'time', text: '加载录音…' });
+  const time = el('span', { class: 'time', text: t('hist.loadingAudio') });
   const playerRow = el('div', { class: 'player' }, playBtn, range, time);
 
   const segBox = el('div', { id: 'segs' });
-  if (!segs.length) segBox.append(el('div', { class: 'empty', text: meeting.transcription?.enabled ? '没有转写内容' : '这场会议只录了音，可以点「整场重转」生成字幕。' }));
+  if (!segs.length) segBox.append(el('div', { class: 'empty', text: meeting.transcription?.enabled ? t('hist.noTranscript') : t('hist.audioOnly') }));
   for (const s of segs) segBox.append(renderSegment(s, { onSeek: (ms) => { player?.seek(ms); if (!player?.playing) player?.play().then(updatePlayBtn); } }));
 
   box.replaceChildren(el('div', { class: 'd-head' }, title, meta, langInfo, notices, retransPicker, actions, playerRow), segBox);
 
-  function updatePlayBtn() { playBtn.textContent = player?.playing ? '❚❚ 暂停' : '▶ 播放'; }
+  function updatePlayBtn() { playBtn.textContent = player?.playing ? t('hist.pause') : t('hist.play'); }
 
-  if (live) { time.textContent = '录制中'; return; }
+  if (live) { time.textContent = t('hist.recording'); return; }
   const trackList = [];
   for (const source of ['them', 'me']) {
     const blob = await buildTrackBlob(meeting.id, source);
     if (blob) trackList.push({ source, blob, offsetMs: tracks[source]?.startOffsetMs ?? 0 });
   }
   if (selectedId !== meeting.id) return; // 加载过程中切换了会议
-  if (!trackList.length) { time.textContent = '没有录音'; return; }
+  if (!trackList.length) { time.textContent = t('hist.noAudio'); return; }
   let lastActive = null;
   player = new SyncedPlayer(trackList, meetingDuration(meeting), (ms) => {
     range.value = ms;
@@ -265,7 +266,7 @@ async function renderDetail() {
 
 async function runForSources(meeting, sources, mode, languageHints) {
   const settings = { ...(await getSettings()), ...(languageHints ? { languageHints } : {}) };
-  if (!settings.sonioxApiKey) { alert('请先在设置里填写 Soniox API key'); return; }
+  if (!settings.sonioxApiKey) { alert(t('hist.needKey')); return; }
   await Promise.all(sources.map((s) => startJob(meeting.id, s, mode, settings)));
 }
 
@@ -273,7 +274,7 @@ async function startJob(meetingId, source, mode, settings) {
   settings = settings || await getSettings();
   const key = `${meetingId}:${source}`;
   if (runningJobs.has(key)) return;
-  runningJobs.set(key, '准备中…');
+  runningJobs.set(key, t('hist.preparing'));
   const rerender = () => { if (selectedId === meetingId) renderDetail(); };
   rerender();
   log.info('retranscribe requested', { meetingId, source, mode, settings: redactSettings(settings) });
@@ -282,14 +283,14 @@ async function startJob(meetingId, source, mode, settings) {
       meetingId, source, mode, settings, log,
       onProgress: (text) => {
         runningJobs.set(key, text);
-        const node = [...document.querySelectorAll('.notice.info')].find((n) => n.textContent.startsWith(`${SOURCE_NAMES[source]}：`));
-        if (node) node.textContent = `${SOURCE_NAMES[source]}：${text}`;
+        const node = document.querySelector(`.notice[data-job="${key}"]`);
+        if (node) node.textContent = t('hist.jobProgress', { src: sourceName(source), text });
       },
     });
     log.info('retranscribe finished', { meetingId, source, mode, ...res });
   } catch (e) {
     log.error('retranscribe failed', { meetingId, source, mode, error: e });
-    alert(`${SOURCE_NAMES[source]} 补转失败：${e.message}`);
+    alert(t('hist.jobFailed', { src: sourceName(source), err: e.message }));
   } finally {
     runningJobs.delete(key);
     textCache.delete(meetingId);
@@ -301,10 +302,10 @@ async function startJob(meetingId, source, mode, settings) {
 async function doExport(meetingId, opts) {
   try {
     const res = await exportMeeting(meetingId, { ...opts, log });
-    alert(`已导出到 下载/${res.folder}/`);
+    alert(t('hist.exported', { folder: res.folder }));
   } catch (e) {
     log.error('export failed', { meetingId, error: e });
-    alert(`导出失败：${e.message}`);
+    alert(t('common.exportFailed', { msg: e.message }));
   }
 }
 
@@ -320,18 +321,18 @@ async function exportMeetingLogs(meeting) {
     });
   } catch (e) {
     log.error('export meeting logs failed', e);
-    alert(`导出日志失败：${e.message}`);
+    alert(t('hist.exportLogsFailed', { msg: e.message }));
   }
 }
 
 async function removeMeeting(meeting) {
-  if (!confirm(`删除「${meeting.title}」的录音和字幕？此操作不可恢复。`)) return;
+  if (!confirm(t('hist.deleteConfirm', { title: meeting.title }))) return;
   await deleteMeeting(meeting.id);
   log.info('meeting deleted', { meetingId: meeting.id });
   selectedId = null;
   player?.destroy();
   player = null;
-  $('#detail').replaceChildren(el('div', { class: 'empty', text: '已删除' }));
+  $('#detail').replaceChildren(el('div', { class: 'empty', text: t('hist.deleted') }));
   await loadList();
   showStorage();
 }
@@ -339,25 +340,25 @@ async function removeMeeting(meeting) {
 // ---------- 顶部工具栏 ----------
 
 $('#exportAll').addEventListener('click', async () => {
-  if (!confirm(`导出全部 ${meetings.length} 场会议的录音和字幕到下载目录？`)) return;
+  if (!confirm(t('hist.exportAllConfirm', { n: meetings.length }))) return;
   for (const m of meetings) {
     if (m.status === 'recording') continue;
     try { await exportMeeting(m.id, { log }); } catch (e) { log.error('export failed', { meetingId: m.id, error: e }); }
   }
-  alert('导出完成：下载/meetscribe/');
+  alert(t('hist.exportAllDone'));
 });
 
 $('#exportLogs').addEventListener('click', async () => {
   const settings = await getSettings();
   await exportLogs({ label: 'all', meta: { settings: redactSettings(settings), meetings: meetings.length } })
-    .catch((e) => alert(`导出日志失败：${e.message}`));
+    .catch((e) => alert(t('hist.exportLogsFailed', { msg: e.message })));
 });
 
 $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
 async function showStorage() {
   const est = await navigator.storage.estimate().catch(() => null);
-  if (est) $('#storage').textContent = `本地占用 ${formatBytes(est.usage)}`;
+  if (est) $('#storage').textContent = t('common.storageUsage', { size: formatBytes(est.usage) });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
