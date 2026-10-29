@@ -29,6 +29,28 @@ async function api(key, path, { method = 'GET', json, form, signal } = {}) {
   return data;
 }
 
+// 上传文件用 XHR：fetch 拿不到上传进度。onUploadProgress(0..1)
+function uploadFile(key, blob, filename, { onUploadProgress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${SONIOX_API}/files`);
+    xhr.setRequestHeader('Authorization', `Bearer ${key}`);
+    xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onUploadProgress?.(ev.loaded / ev.total); };
+    xhr.onload = () => {
+      let data = null;
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { data = { message: xhr.responseText.slice(0, 300) }; }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new SonioxApiError(xhr.status, data || {}, 'POST /files'));
+    };
+    xhr.onerror = () => reject(new Error('POST /files network error'));
+    xhr.onabort = () => reject(new Error('aborted'));
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    const form = new FormData();
+    form.append('file', blob, filename);
+    xhr.send(form);
+  });
+}
+
 export async function validateKey(key) {
   await api(key, '/files?limit=1');
   return true;
@@ -60,17 +82,20 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 });
 
 // resume: { fileId, transcriptionId } —— 页面关闭后重新打开时继续轮询。
-// onIds({ fileId, transcriptionId }) 用于持久化，onProgress(text) 用于展示。
+// onIds({ fileId, transcriptionId }) 用于持久化。
+// onProgress({ step, ... }) 用于展示，页面按 step 翻译：
+//   upload { fraction, bytes } → queued { elapsedMs } → transcribing { elapsedMs } → download
 export async function transcribeBlob({ key, blob, filename, config, log, onProgress, onIds, resume = {}, signal }) {
   let { fileId, transcriptionId } = resume;
   try {
     if (!transcriptionId) {
       if (!fileId) {
-        onProgress?.(`Uploading audio (${Math.round(blob.size / 1024 / 1024 * 10) / 10} MB)…`);
-        const form = new FormData();
-        form.append('file', blob, filename);
+        onProgress?.({ step: 'upload', fraction: 0, bytes: blob.size });
         const t0 = Date.now();
-        const file = await api(key, '/files', { method: 'POST', form, signal });
+        const file = await uploadFile(key, blob, filename, {
+          signal,
+          onUploadProgress: (fraction) => onProgress?.({ step: 'upload', fraction, bytes: blob.size }),
+        });
         fileId = file.id;
         log?.info('soniox file uploaded', { fileId, size: blob.size, ms: Date.now() - t0 });
         onIds?.({ fileId });
@@ -93,12 +118,12 @@ export async function transcribeBlob({ key, blob, filename, config, log, onProgr
         await cleanup(key, { fileId, transcriptionId }, log);
         throw new Error(`transcription failed: ${st.error_type || ''} ${st.error_message || ''}`);
       }
-      onProgress?.(st.status === 'queued' ? 'Queued…' : `Transcribing… (${Math.round((Date.now() - t0) / 1000)}s)`);
+      onProgress?.({ step: st.status === 'queued' ? 'queued' : 'transcribing', elapsedMs: Date.now() - t0 });
       await sleep(delay, signal);
       delay = Math.min(delay * 1.5, 10_000);
     }
 
-    onProgress?.('Downloading result…');
+    onProgress?.({ step: 'download' });
     const transcript = await api(key, `/transcriptions/${transcriptionId}/transcript`, { signal });
     await cleanup(key, { fileId, transcriptionId }, log);
     return transcript.tokens || [];

@@ -66,6 +66,14 @@ export function buildSpeakerView(speakers, segments) {
   return { list, byKey, nextN: n + 1 };
 }
 
+// 本场里除 key 以外、名字和 name 相同的人（不区分大小写、忽略首尾空格）。界面用它在合并前先确认。
+export function sameNameEntry(view, key, name) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return null;
+  const canon = view?.byKey.get(key)?.key ?? key;
+  return view?.list.find((e) => e.key !== canon && e.name && sameName(e.name, trimmed)) || null;
+}
+
 // 改名。名字和本场另一个人相同 → 合并到那个人（学 Notta：同一个入口既能改名也能合并）。
 // 空名字 = 清除名字，恢复默认编号。返回新的 speakers 对象和 { merged: 目标规范键 | null }。
 export function renameSpeaker(speakers, key, name, view) {
@@ -76,7 +84,7 @@ export function renameSpeaker(speakers, key, name, view) {
     delete next[canon];
     return { speakers: next, merged: null };
   }
-  const target = view?.list.find((e) => e.key !== canon && e.name && sameName(e.name, trimmed));
+  const target = sameNameEntry(view, canon, trimmed);
   if (target) return { speakers: mergeSpeaker(next, canon, target.key), merged: target.key };
   next[canon] = { name: trimmed };
   return { speakers: next, merged: null };

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   speakerKeyFor, segmentKey, canonicalKey, buildSpeakerView, renameSpeaker, mergeSpeaker,
-  pruneSpeakers, inheritSpeakerNames,
+  pruneSpeakers, inheritSpeakerNames, sameNameEntry,
 } from '../extension/src/lib/speakers.js';
 import { TranscriptAssembler, tokensToSegments } from '../extension/src/lib/transcript.js';
 
@@ -92,4 +92,13 @@ test('inherit skips weak overlaps', () => {
   const speakers = { 'rt1:1': { name: 'Alice' } };
   const res = inheritSpeakerNames({ speakers, oldSegments: [seg('rt1:1', 0, 1000)], newSegments: [seg('ax:1', 800, 10_000)] });
   assert.deepEqual(res.entries, {});
+});
+
+test('sameNameEntry finds another person with the same name, not yourself', () => {
+  const segs = [seg('rt1:1', 0, 1000), seg('rt2:1', 2000, 3000), seg('rt2:2', 4000, 5000)];
+  const view = buildSpeakerView({ 'rt1:1': { name: 'Alice' }, 'rt2:2': { alias: 'rt1:1' } }, segs);
+  assert.equal(sameNameEntry(view, 'rt2:1', ' alice ')?.key, 'rt1:1');
+  assert.equal(sameNameEntry(view, 'rt2:2', 'Alice'), null, 'already the same person');
+  assert.equal(sameNameEntry(view, 'rt2:1', 'Bob'), null);
+  assert.equal(sameNameEntry(view, 'rt2:1', ''), null);
 });

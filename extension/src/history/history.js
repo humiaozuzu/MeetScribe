@@ -22,7 +22,7 @@ let meetings = [];
 let selectedId = null;
 let player = null;
 const textCache = new Map(); // meetingId -> 全文（搜索用）
-const runningJobs = new Map(); // `${meetingId}:${source}` -> progress text
+const runningJobs = new Map(); // `${meetingId}:${source}` -> 进度 { step, fraction?, elapsedMs?, at }
 const speakerUpdaters = new Map(); // meetingId -> 重新读取说话人表并刷新（别的页面改名后）
 
 // ---------- 列表 ----------
@@ -199,10 +199,15 @@ async function renderDetail() {
   if (gaps.length) {
     notices.append(el('div', { class: 'notice warn', text: t('hist.gaps', { list: gaps.map((g) => `${sourceName(g.source)} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join(t('hist.listSep')) }) }));
   }
+  // 正在跑的任务：第一次重转时 meeting.jobs 里还没有这条，所以按 runningJobs 显示
+  for (const source of ['them', 'me']) {
+    const key = `${meeting.id}:${source}`;
+    if (runningJobs.has(key)) notices.append(renderJobProgress(el('div', { class: 'notice info job', 'data-job': key }), source, runningJobs.get(key), tracks[source]));
+  }
   for (const j of meeting.jobs || []) {
     const key = `${meeting.id}:${j.source}`;
-    if (runningJobs.has(key)) notices.append(el('div', { class: 'notice info', 'data-job': key, text: t('hist.jobProgress', { src: sourceName(j.source), text: runningJobs.get(key) }) }));
-    else if (j.status === 'running') notices.append(el('div', { class: 'notice warn' }, t('hist.jobUnfinished', { src: sourceName(j.source) }),
+    if (runningJobs.has(key)) continue;
+    if (j.status === 'running') notices.append(el('div', { class: 'notice warn' }, t('hist.jobUnfinished', { src: sourceName(j.source) }),
       el('button', { class: 'link', text: t('hist.continue'), onclick: () => startJob(meeting.id, j.source, j.mode) })));
     else if (j.status === 'error') notices.append(el('div', { class: 'notice err', text: t('hist.jobFailed', { src: sourceName(j.source), err: j.error }) }));
   }
@@ -313,21 +318,60 @@ async function runForSources(meeting, sources, mode, languageHints) {
   await Promise.all(sources.map((s) => startJob(meeting.id, s, mode, settings)));
 }
 
+// 进度分 4 步：准备 / 上传（百分比）→ 排队 → 转写（已用时间）→ 保存结果
+const JOB_STEP_NO = { prepare: 1, upload: 1, queued: 2, transcribing: 3, download: 4, save: 4 };
+
+function jobStepText(p) {
+  if (p.step === 'upload') return t('hist.step.upload', { pct: Math.round((p.fraction || 0) * 100) });
+  if (p.step === 'transcribing') return t('hist.step.transcribing', { elapsed: formatClock((p.elapsedMs || 0) + Date.now() - p.at) });
+  return t(`hist.step.${p.step === 'download' ? 'save' : p.step}`);
+}
+
+// node.dataset.audio：音频时长说明，渲染一次后保存在节点上，进度更新时不必再读会议
+function jobLine(node, source, p) {
+  return t('hist.jobStep', { src: sourceName(source), n: JOB_STEP_NO[p.step] || 1, step: jobStepText(p) }) + (node.dataset.audio || '');
+}
+
+function renderJobProgress(node, source, p, track) {
+  if (track?.seconds) node.dataset.audio = t('hist.jobAudio', { d: formatClock(track.seconds * 1000) });
+  const bar = el('progress', { max: 1 });
+  if (p.step === 'upload') bar.value = p.fraction || 0; // 其他步骤没有百分比，显示为滚动条
+  node.replaceChildren(el('span', { class: 'job-text', text: jobLine(node, source, p) }), bar);
+  return node;
+}
+
+function updateJobProgress(node, source, p) {
+  const bar = node.querySelector('progress');
+  const text = node.querySelector('.job-text');
+  if (!bar || !text) return;
+  text.textContent = jobLine(node, source, p);
+  if (p.step === 'upload') bar.value = p.fraction || 0;
+  else bar.removeAttribute('value');
+}
+
+// 转写中的已用时间每秒刷新（Soniox 轮询间隔最长 10 秒）
+setInterval(() => {
+  for (const node of document.querySelectorAll('.notice[data-job]')) {
+    const p = runningJobs.get(node.dataset.job);
+    if (p?.step === 'transcribing') updateJobProgress(node, node.dataset.job.split(':').pop(), p);
+  }
+}, 1000);
+
 async function startJob(meetingId, source, mode, settings) {
   settings = settings || await getSettings();
   const key = `${meetingId}:${source}`;
   if (runningJobs.has(key)) return;
-  runningJobs.set(key, t('hist.preparing'));
+  runningJobs.set(key, { step: 'prepare', at: Date.now() });
   const rerender = () => { if (selectedId === meetingId) renderDetail(); };
   rerender();
   log.info('retranscribe requested', { meetingId, source, mode, settings: redactSettings(settings) });
   try {
     const res = await runRetranscribe({
       meetingId, source, mode, settings, log,
-      onProgress: (text) => {
-        runningJobs.set(key, text);
+      onProgress: (p) => {
+        runningJobs.set(key, { ...p, at: Date.now() });
         const node = document.querySelector(`.notice[data-job="${key}"]`);
-        if (node) node.textContent = t('hist.jobProgress', { src: sourceName(source), text });
+        if (node) updateJobProgress(node, source, runningJobs.get(key));
       },
     });
     log.info('retranscribe finished', { meetingId, source, mode, ...res });

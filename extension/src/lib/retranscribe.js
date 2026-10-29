@@ -60,6 +60,7 @@ export async function runRetranscribe({ meetingId, source, mode, settings, log, 
       onIds: (ids) => saveJob(meetingId, source, ids).catch((e) => jlog.warn('save job ids failed', e)),
     });
 
+    onProgress?.({ step: 'save' });
     // 录音文件的 0 秒 = MediaRecorder 开始时刻
     const offsetMs = track?.startOffsetMs ?? 0;
     // 每次异步结果一套说话人编号，键里带上这次的标签，免得和之前的结果混在一起

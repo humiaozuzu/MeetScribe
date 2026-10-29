@@ -138,3 +138,6 @@ html:lang(en) .seg.async .meta::after { content: 'filled'; }
 .spk-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .spk-bar .chip { border: none; cursor: pointer; }
 .spk-bar .chip:hover { background: var(--them-soft); color: var(--them); }
+.spk-confirm { display: grid; gap: 8px; padding: 10px; border-radius: var(--radius); background: var(--warn-soft); color: var(--text); font-size: 13px; }
+.notice.job { display: grid; gap: 6px; }
+.notice.job progress { width: 100%; height: 6px; }

@@ -1,10 +1,11 @@
 // 说话人改名 / 合并弹窗（历史页和侧边栏共用）。
 // 学 Notta：同一个入口，输入名字 = 这个人的所有发言一起改名；选下面已有的人 = 合并为同一个人。
+// 合并（点了下面的人，或输入了本场已有的名字）要再确认一次，避免误点把两个人并成一个。
 
 import { el, speakerName } from './common.js';
 import { t } from './i18n.js';
 import { updateMeeting, getSegments, listMeetings } from '../lib/db.js';
-import { buildSpeakerView, renameSpeaker, mergeSpeaker } from '../lib/speakers.js';
+import { buildSpeakerView, renameSpeaker, mergeSpeaker, sameNameEntry } from '../lib/speakers.js';
 import { formatClock } from '../lib/format.js';
 import { EVT, broadcast } from '../lib/messages.js';
 
@@ -63,8 +64,26 @@ export async function openSpeakerDialog({ meetingId, key, view, log, onChanged }
     }
   };
 
+  // 合并确认：显示在弹窗里，确认前不保存
+  const confirmBox = el('div', { class: 'spk-confirm hidden' });
+  const askMerge = (target, change) => {
+    confirmBox.replaceChildren(
+      el('div', { text: t('spk.mergeConfirm', { from: label, into: entryLabel(target, view) }) }),
+      el('div', { class: 'spk-actions' },
+        el('span', { class: 'spacer' }),
+        el('button', { type: 'button', text: t('spk.cancel'), onclick: () => { confirmBox.classList.add('hidden'); input.focus(); } }),
+        el('button', { type: 'button', class: 'danger', text: t('spk.mergeOk'), onclick: () => run(change) })));
+    confirmBox.classList.remove('hidden');
+    confirmBox.querySelector('button.danger').focus();
+  };
+  const submit = () => {
+    const target = sameNameEntry(view, key, input.value);
+    if (target) askMerge(target, { key, name: input.value });
+    else run({ key, name: input.value });
+  };
+
   const others = view.list.filter((e) => e !== entry);
-  const form = el('form', { method: 'dialog', onsubmit: (ev) => { ev.preventDefault(); run({ key, name: input.value }); } },
+  const form = el('form', { method: 'dialog', onsubmit: (ev) => { ev.preventDefault(); submit(); } },
     el('h3', { text: t('spk.dialogTitle', { name: label }) }),
     el('div', { class: 'faint', text: t('spk.talkTime', { d: formatClock(entry.ms) }) }),
     el('label', { class: 'spk-field' }, el('span', { text: t('spk.nameLabel') }), input, datalist),
@@ -73,8 +92,9 @@ export async function openSpeakerDialog({ meetingId, key, view, log, onChanged }
       el('div', { class: 'faint', text: t('spk.mergeInto') }),
       el('div', { class: 'spk-chips' }, others.map((o) => el('button', {
         type: 'button', class: 'chip', text: entryLabel(o, view),
-        onclick: () => run({ key, into: o.key }),
+        onclick: () => askMerge(o, { key, into: o.key }),
       })))) : null,
+    confirmBox,
     err,
     el('div', { class: 'spk-actions' },
       entry.name ? el('button', { type: 'button', class: 'link', text: t('spk.clear'), onclick: () => run({ key, name: '' }) }) : null,
