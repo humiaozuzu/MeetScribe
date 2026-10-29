@@ -3,11 +3,12 @@
 //   mode 'full'：用整场异步结果替换这一路的全部字幕（通常比实时更准）。
 // 任务状态写在 meeting.jobs，页面关闭后重新打开可以继续轮询。
 
-import { getMeeting, updateMeeting, replaceSegments, addSegments } from './db.js';
+import { getMeeting, getSegments, updateMeeting, replaceSegments, addSegments } from './db.js';
 import { buildTrackBlob } from './exporter.js';
 import { transcribeBlob, buildAsyncConfig, meetingLanguageHints } from './soniox-async.js';
 import { meetingTopic } from './soniox-realtime.js';
 import { tokensToSegments } from './transcript.js';
+import { inheritSpeakerNames, pruneSpeakers } from './speakers.js';
 
 
 export function openGaps(meeting, source) {
@@ -61,18 +62,29 @@ export async function runRetranscribe({ meetingId, source, mode, settings, log, 
 
     // 录音文件的 0 秒 = MediaRecorder 开始时刻
     const offsetMs = track?.startOffsetMs ?? 0;
-    const segs = tokensToSegments(tokens, { source, offsetMs, origin: 'async', gaps })
+    // 每次异步结果一套说话人编号，键里带上这次的标签，免得和之前的结果混在一起
+    const tag = `${mode === 'full' ? 'a' : 'g'}${Date.now().toString(36)}`;
+    const segs = tokensToSegments(tokens, { source, offsetMs, origin: 'async', gaps, tag })
       .map((s) => ({ ...s, meetingId }));
 
+    let oldSegs = null;
     if (mode === 'full') {
+      oldSegs = (await getSegments(meetingId)).filter((s) => s.source === source);
       await replaceSegments(meetingId, source, segs);
     } else {
       // 只补本次未填的缺口；已填过的缺口不在 gaps 里，不会重复
       await addSegments(segs);
     }
+    const remaining = mode === 'full' ? await getSegments(meetingId) : null;
     await updateMeeting(meetingId, (m) => {
       m.gaps = (m.gaps || []).map((g) => (g.source === source ? { ...g, filled: true } : g));
-      if (mode === 'full') m.retranscribed = { ...(m.retranscribed || {}), [source]: Date.now() };
+      if (mode === 'full') {
+        m.retranscribed = { ...(m.retranscribed || {}), [source]: Date.now() };
+        // 按时间重叠把旧结果里改过的名字带到新说话人上，再清掉不再用到的旧条目
+        const inherit = inheritSpeakerNames({ speakers: m.speakers, oldSegments: oldSegs, newSegments: segs });
+        m.speakers = pruneSpeakers({ ...(m.speakers || {}), ...inherit.entries }, remaining);
+        jlog.info('speaker names inherited', { newSpeakers: inherit.newSpeakers, matches: inherit.matches });
+      }
     });
     await saveJob(meetingId, source, { status: 'done', segments: segs.length, tokens: tokens.length, fileId: null, transcriptionId: null });
     jlog.info('retranscribe done', { tokens: tokens.length, segments: segs.length });

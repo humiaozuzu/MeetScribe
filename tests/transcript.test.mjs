@@ -12,7 +12,7 @@ test('assembler: final tokens commit on <end> with session offset', () => {
   a.setSessionOffset(10_000);
   a.handle([tok('你好', 0, 400), { text: '世界', start_ms: 400, end_ms: 800, is_final: false }]);
   assert.equal(segs.length, 0);
-  assert.deepEqual(partials.at(-1), { source: 'them', speaker: undefined, finalText: '你好', pendingText: '世界' });
+  assert.deepEqual(partials.at(-1), { source: 'them', speaker: undefined, speakerKey: 'them', finalText: '你好', pendingText: '世界' });
   a.handle([tok('世界', 400, 800), tok('<end>', 800, 800)]);
   assert.equal(segs.length, 1);
   assert.equal(segs[0].text, '你好世界');
@@ -88,7 +88,11 @@ test('format helpers', () => {
     [{ source: 'me', startMs: 1000, text: '你好' }, { source: 'them', speaker: '2', startMs: 2000, text: 'hi', translation: '嗨' }],
   );
   assert.match(md, /\*\*\[00:01\] Me\*\*: 你好/);
-  assert.match(md, /\*\*\[00:02\] Speaker 2\*\*: hi\n> 嗨/);
+  // 默认编号按本场首次出现排，不用 Soniox 的原始编号
+  assert.match(md, /\*\*\[00:02\] Speaker 1\*\*: hi\n> 嗨/);
+  const named = buildMarkdown({ title: 'T', startedAt: 0, speakers: { 'rt:2': { name: 'Alice' } } },
+    [{ source: 'them', speaker: '2', startMs: 2000, text: 'hi' }]);
+  assert.match(named, /\*\*\[00:02\] Alice\*\*: hi/);
   assert.match(md, /Transcript gaps: Others 00:00–00:05/);
   assert.match(md, /^# T\n\n- Time: .*\n- Duration: 01:00\n/);
   assert.match(md, /## Transcript/);

@@ -1,5 +1,5 @@
 // 界面字符串表：zh 是基准，ja / en 必须有同样的 key 和 {参数}（tests/i18n.test.mjs 会检查）。
-// key 前缀：common / status / lang / popup / sp（侧边栏）/ hist（历史页）/ opt（设置页）。
+// key 前缀：common / status / lang / popup / sp（侧边栏）/ hist（历史页）/ opt（设置页）/ spk（说话人改名）。
 
 const zh = {
   'common.options': '设置',
@@ -184,6 +184,18 @@ const zh = {
   'opt.logsExported': '日志已导出到 下载/meetscribe/logs/',
   'opt.clearConfirm': '清空所有日志？',
   'opt.logsCleared': '日志已清空',
+  'spk.renameTitle': '点击改名，或与其他人合并',
+  'spk.dialogTitle': '说话人：{name}',
+  'spk.talkTime': '发言时长 {d}',
+  'spk.nameLabel': '名字',
+  'spk.namePlaceholder': '输入名字',
+  'spk.hint': '这个人的所有发言会一起改名。名字和本场已有的人相同时，会合并为同一个人。',
+  'spk.mergeInto': '或者，和下面这个人是同一个人（合并）：',
+  'spk.clear': '恢复默认名',
+  'spk.cancel': '取消',
+  'spk.save': '保存',
+  'spk.saveFailed': '保存失败：{msg}',
+  'hist.speakers': '说话人',
 };
 
 const ja = {
@@ -369,6 +381,18 @@ const ja = {
   'opt.logsExported': 'ログを ダウンロード/meetscribe/logs/ に書き出しました',
   'opt.clearConfirm': 'すべてのログを消去しますか？',
   'opt.logsCleared': 'ログを消去しました',
+  'spk.renameTitle': 'クリックして名前を変更、または他の人と統合',
+  'spk.dialogTitle': '話者：{name}',
+  'spk.talkTime': '発言時間 {d}',
+  'spk.nameLabel': '名前',
+  'spk.namePlaceholder': '名前を入力',
+  'spk.hint': 'この人のすべての発言の名前がまとめて変わります。この会議にすでにいる人と同じ名前にすると、同じ人として統合されます。',
+  'spk.mergeInto': 'または、次の人と同じ人として統合：',
+  'spk.clear': '既定の名前に戻す',
+  'spk.cancel': 'キャンセル',
+  'spk.save': '保存',
+  'spk.saveFailed': '保存できませんでした：{msg}',
+  'hist.speakers': '話者',
 };
 
 const en = {
@@ -554,6 +578,18 @@ const en = {
   'opt.logsExported': 'Logs exported to Downloads/meetscribe/logs/',
   'opt.clearConfirm': 'Clear all logs?',
   'opt.logsCleared': 'Logs cleared',
+  'spk.renameTitle': 'Click to rename, or merge with someone else',
+  'spk.dialogTitle': 'Speaker: {name}',
+  'spk.talkTime': 'Talk time {d}',
+  'spk.nameLabel': 'Name',
+  'spk.namePlaceholder': 'Enter a name',
+  'spk.hint': 'Renames every line from this person. Using the name of someone already in this meeting merges them into one person.',
+  'spk.mergeInto': 'Or mark as the same person as:',
+  'spk.clear': 'Reset to default name',
+  'spk.cancel': 'Cancel',
+  'spk.save': 'Save',
+  'spk.saveFailed': 'Could not save: {msg}',
+  'hist.speakers': 'Speakers',
 };
 
 export const STRINGS = { zh, ja, en };

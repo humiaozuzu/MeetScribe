@@ -1,7 +1,7 @@
 // 侧边栏：会议进行中的实时字幕与状态。
 // 数据来源：打开时从 IndexedDB 读已定稿片段 + 向 offscreen 取当前状态；之后监听广播。
 
-import { $, el, sendToSw, sendToOffscreen, statusChip, renderSegment, sourceName } from '../ui/common.js';
+import { $, el, sendToSw, sendToOffscreen, statusChip, renderSegment, sourceName, relabelSegments } from '../ui/common.js';
 import { SW, OFFSCREEN, EVT, STATUS } from '../lib/messages.js';
 import { getSegments, getMeeting } from '../lib/db.js';
 import { formatClock } from '../lib/format.js';
@@ -9,6 +9,8 @@ import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
 import { runPendingExports } from '../lib/exporter.js';
 import { langPicker } from '../ui/langs.js';
 import { initI18n, t } from '../ui/i18n.js';
+import { openSpeakerDialog } from '../ui/speakers.js';
+import { buildSpeakerView } from '../lib/speakers.js';
 
 const log = createLogger('sidepanel');
 installGlobalErrorHandlers(log);
@@ -24,6 +26,10 @@ let micMuted = null;      // 会议里是否静音：true / false / null（检�
 let stickToBottom = true;
 let autoStopDeadline = null;
 let autoStopTicker = null;
+// 说话人表：会议中也能改名 / 合并（重连后编号会变，新出现的人显示为下一个编号，可合并回已有的人）
+let segs = [];
+let speakers = {};
+let view = buildSpeakerView(speakers, segs);
 
 // 会议语言：点击后稍等再提交，连续点几个语言只重连一次
 const LANG_DEBOUNCE_MS = 800;
@@ -130,7 +136,7 @@ function renderPartials() {
   for (const src of SOURCES) {
     const p = partials[src];
     if (!p || (!p.finalText && !p.pendingText)) continue;
-    const node = renderSegment({ source: src, speaker: p.speaker, startMs: null, text: '' });
+    const node = renderSegment({ source: src, speaker: p.speaker, speakerKey: p.speakerKey, startMs: null, text: '' }, { view });
     node.querySelector('.meta span:last-child')?.remove();
     const text = node.querySelector('.text');
     text.replaceChildren(p.finalText, el('span', { class: 'pending', text: p.pendingText }));
@@ -141,10 +147,24 @@ function renderPartials() {
   scrollDown();
 }
 
+function onSpeaker(key) {
+  openSpeakerDialog({ meetingId, key, view, log, onChanged: (m) => applySpeakers(m.speakers) });
+}
+
+function applySpeakers(next) {
+  speakers = next || {};
+  view = buildSpeakerView(speakers, segs);
+  relabelSegments(list, view);
+  renderPartials();
+}
+
 function appendSegment(seg) {
   $('#empty')?.remove();
+  const idx = segs.findIndex((s) => s.id === seg.id);
+  if (idx >= 0) segs[idx] = seg; else segs.push(seg);
+  view = buildSpeakerView(speakers, segs);
   const existing = list.querySelector(`.seg[data-id="${seg.id}"]`);
-  const node = renderSegment(seg);
+  const node = renderSegment(seg, { view, onSpeaker });
   if (existing) existing.replaceWith(node);
   else list.insertBefore(node, liveBox.parentNode === list ? liveBox : null);
   scrollDown();
@@ -152,11 +172,14 @@ function appendSegment(seg) {
 
 async function loadMeeting(id) {
   meetingId = id;
-  const [meeting, segs] = await Promise.all([getMeeting(id), getSegments(id)]);
+  const [meeting, loaded] = await Promise.all([getMeeting(id), getSegments(id)]);
+  segs = loaded;
+  speakers = meeting?.speakers || {};
+  view = buildSpeakerView(speakers, segs);
   $('#title').textContent = meeting?.title || 'MeetScribe';
   list.replaceChildren();
   if (!segs.length) list.append(el('div', { class: 'empty', id: 'empty', text: active ? t('sp.waiting') : t('sp.noTranscript') }));
-  for (const s of segs) list.append(renderSegment(s));
+  for (const s of segs) list.append(renderSegment(s, { view, onSpeaker }));
   list.append(liveBox);
   stickToBottom = true;
   scrollDown();
@@ -204,6 +227,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
   if (msg.meetingId == null || msg.meetingId !== meetingId) return false;
   if (msg.type === EVT.AUTO_STOP) { setAutoStop(msg.pending ? msg.deadline : null); return false; }
+  if (msg.type === EVT.SPEAKERS) {
+    getMeeting(meetingId).then((m) => applySpeakers(m?.speakers)).catch((e) => log.warn('refresh speakers failed', e));
+    return false;
+  }
   switch (msg.type) {
     case EVT.SEGMENT:
     case EVT.SEGMENT_UPDATE:

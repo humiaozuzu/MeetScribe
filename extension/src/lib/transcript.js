@@ -6,6 +6,9 @@
 //   - translation_status === 'translation' 的 token 是译文，没有时间戳。
 // 时间：token 的 start_ms/end_ms 相对本次 WebSocket 会话的音频起点；
 //       sessionOffsetMs 是该起点在整场会议时间轴上的位置。
+// 说话人：编号只在一次会话内有效，片段的 speakerKey 带上会话标签（见 speakers.js）。
+
+import { speakerKeyFor } from './speakers.js';
 
 const CONTROL_TOKENS = new Set(['<end>', '<fin>']);
 
@@ -16,15 +19,17 @@ export class TranscriptAssembler {
     this.onPartial = onPartial || (() => {});
     this.onUpdate = onUpdate || (() => {});
     this.sessionOffsetMs = 0;
+    this.sessionTag = 'rt';
     this.cur = [];          // 已 final 但尚未断句的 token
     this.curTranslation = '';
     this.last = null;       // 最近提交的片段（用于挂接迟到的译文）
   }
 
-  setSessionOffset(ms) {
+  setSessionOffset(ms, sessionNo) {
     // 新会话开始前，把上一会话残留的 final token 先提交掉。
     this.commit();
     this.sessionOffsetMs = ms;
+    this.sessionTag = sessionNo == null ? 'rt' : `rt${sessionNo}`;
   }
 
   handle(tokens) {
@@ -52,9 +57,11 @@ export class TranscriptAssembler {
         pending.push(t);
       }
     }
+    const speaker = this.cur[0]?.speaker ?? pending[0]?.speaker;
     this.onPartial({
       source: this.source,
-      speaker: this.cur[0]?.speaker ?? pending[0]?.speaker,
+      speaker,
+      speakerKey: speakerKeyFor(this.source, this.sessionTag, speaker),
       finalText: joinText(this.cur),
       pendingText: joinText(pending),
     });
@@ -71,7 +78,7 @@ export class TranscriptAssembler {
 
   commit() {
     if (!this.cur.length) return null;
-    const seg = buildSegment(this.cur, this.source, 'realtime');
+    const seg = buildSegment(this.cur, this.source, 'realtime', this.sessionTag);
     if (this.curTranslation.trim()) seg.translation = this.curTranslation.trim();
     this.cur = [];
     this.curTranslation = '';
@@ -92,10 +99,11 @@ function joinText(tokens) {
   return tokens.map((t) => t.text).join('').trim();
 }
 
-function buildSegment(tokens, source, origin) {
+function buildSegment(tokens, source, origin, tag) {
   return {
     source,
     speaker: tokens[0].speaker,
+    speakerKey: speakerKeyFor(source, tag, tokens[0].speaker),
     language: tokens.find((t) => t.language)?.language,
     startMs: tokens[0].startMs,
     endMs: tokens[tokens.length - 1].endMs,
@@ -108,13 +116,14 @@ const SENTENCE_END = /[。！？!?.]\s*$/;
 
 // 异步（整文件）转写结果 → 片段。按说话人变化、长停顿、长句断开。
 // opts.gaps: 只保留落在这些区间内的 token（补转缺口用），区间为会议时间轴毫秒。
-export function tokensToSegments(tokens, { source, offsetMs = 0, origin = 'async', gaps = null,
+// opts.tag: 说话人键的会话标签，每次异步转写一个（编号只在这一次结果里有效）。
+export function tokensToSegments(tokens, { source, offsetMs = 0, origin = 'async', gaps = null, tag = 'a',
   pauseMs = 1500, maxSegmentMs = 15000 } = {}) {
   const segs = [];
   let cur = [];
   const push = () => {
     if (cur.length) {
-      const seg = buildSegment(cur, source, origin);
+      const seg = buildSegment(cur, source, origin, tag);
       if (seg.text) segs.push(seg);
     }
     cur = [];

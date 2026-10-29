@@ -1,6 +1,6 @@
-// 历史页：会议列表、搜索、回放（字幕跟随）、补转 / 整场重转、导出、删除。
+// 历史页：会议列表、搜索、回放（字幕跟随）、补转 / 整场重转、说话人改名 / 合并、导出、删除。
 
-import { $, el, renderSegment, sourceName } from '../ui/common.js';
+import { $, el, renderSegment, sourceName, relabelSegments } from '../ui/common.js';
 import { listMeetings, getMeeting, getSegments, updateMeeting, deleteMeeting } from '../lib/db.js';
 import { formatClock, formatDateTime, formatBytes } from '../lib/format.js';
 import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
@@ -10,6 +10,8 @@ import { getSettings, redactSettings } from '../lib/settings.js';
 import { EVT } from '../lib/messages.js';
 import { langPicker, langNames } from '../ui/langs.js';
 import { initI18n, t } from '../ui/i18n.js';
+import { openSpeakerDialog, entryLabel } from '../ui/speakers.js';
+import { buildSpeakerView } from '../lib/speakers.js';
 
 const log = createLogger('history');
 installGlobalErrorHandlers(log);
@@ -20,6 +22,7 @@ let selectedId = null;
 let player = null;
 const textCache = new Map(); // meetingId -> 全文（搜索用）
 const runningJobs = new Map(); // `${meetingId}:${source}` -> progress text
+const speakerUpdaters = new Map(); // meetingId -> 重新读取说话人表并刷新（别的页面改名后）
 
 // ---------- 列表 ----------
 
@@ -156,6 +159,7 @@ async function select(id) {
 async function renderDetail() {
   player?.destroy();
   player = null;
+  speakerUpdaters.clear();
   const box = $('#detail');
   const meeting = await getMeeting(selectedId);
   if (!meeting) { box.replaceChildren(el('div', { class: 'empty', text: t('hist.notFound') })); return; }
@@ -224,11 +228,33 @@ async function renderDetail() {
   const time = el('span', { class: 'time', text: t('hist.loadingAudio') });
   const playerRow = el('div', { class: 'player' }, playBtn, range, time);
 
+  // 说话人：点名字改名 / 合并，改完原地刷新，不重建列表（播放器不中断）
+  let view = buildSpeakerView(meeting.speakers, segs);
+  const speakerBar = el('div', { class: 'spk-bar' });
+  const onSpeaker = (key) => openSpeakerDialog({
+    meetingId: meeting.id, key, view, log,
+    onChanged: (m) => applySpeakers(m.speakers),
+  });
+  function applySpeakers(speakers) {
+    view = buildSpeakerView(speakers, segs);
+    relabelSegments(segBox, view);
+    renderSpeakerBar();
+  }
+  function renderSpeakerBar() {
+    speakerBar.replaceChildren();
+    if (!view.list.length) return;
+    speakerBar.append(el('span', { class: 'faint', text: t('hist.speakers') }),
+      ...view.list.map((e) => el('button', { class: 'chip', text: entryLabel(e, view), title: t('spk.renameTitle'),
+        onclick: () => onSpeaker(e.key) })));
+  }
+  speakerUpdaters.set(meeting.id, async () => applySpeakers((await getMeeting(meeting.id))?.speakers));
+
   const segBox = el('div', { id: 'segs' });
   if (!segs.length) segBox.append(el('div', { class: 'empty', text: meeting.transcription?.enabled ? t('hist.noTranscript') : t('hist.audioOnly') }));
-  for (const s of segs) segBox.append(renderSegment(s, { onSeek: (ms) => { player?.seek(ms); if (!player?.playing) player?.play().then(updatePlayBtn); } }));
+  for (const s of segs) segBox.append(renderSegment(s, { view, onSpeaker, onSeek: (ms) => { player?.seek(ms); if (!player?.playing) player?.play().then(updatePlayBtn); } }));
+  renderSpeakerBar();
 
-  box.replaceChildren(el('div', { class: 'd-head' }, title, meta, langInfo, notices, retransPicker, actions, playerRow), segBox);
+  box.replaceChildren(el('div', { class: 'd-head' }, title, meta, langInfo, notices, retransPicker, actions, speakerBar, playerRow), segBox);
 
   function updatePlayBtn() { playBtn.textContent = player?.playing ? t('hist.pause') : t('hist.play'); }
 
@@ -364,6 +390,9 @@ async function showStorage() {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === EVT.MEETING_ENDED || msg?.type === EVT.MEETING_STATE) {
     loadList().then(() => { if (selectedId) renderDetail(); });
+  }
+  if (msg?.type === EVT.SPEAKERS) {
+    speakerUpdaters.get(msg.meetingId)?.().catch((e) => log.warn('refresh speakers failed', e));
   }
   return false;
 });

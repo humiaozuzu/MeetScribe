@@ -39,6 +39,7 @@ The first line is a header with the extension version, user agent, redacted sett
 | Auto stop did not fire, or fired wrongly | `meeting presence` (see `signal`), `auto stop scheduled`, `auto stop cancelled`, `not in call yet` |
 | Gap fill / re-transcription | `retranscribe`, `soniox async transcription failed`, `soniox file uploaded` |
 | Export | `meeting exported`, `export failed`, `auto export failed` |
+| Speaker names wrong, lost after re-transcription, or rename did not save | `speaker changed` (see `key`, `merged`), `speaker change failed`, `speaker names inherited` (see `matches`), `soniox session start` (each new `sessionNo` starts new speaker numbers) |
 
 ## Common issues
 

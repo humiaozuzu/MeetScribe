@@ -175,7 +175,7 @@ export class TrackPipeline {
       onSessionStart: (firstSample, sessionNo) => {
         const offset = this.samplesToMeetingMs(firstSample);
         this.log.info('soniox session start', { sessionNo, firstSample, meetingOffsetMs: offset });
-        this.assembler.setSessionOffset(offset);
+        this.assembler.setSessionOffset(offset, sessionNo);
       },
       onGap: (fromSample, toSample, reason) => {
         this.onGap({

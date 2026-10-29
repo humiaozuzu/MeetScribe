@@ -22,7 +22,7 @@ export const OFFSCREEN = {
 export const EVT = {
   SEGMENT: 'rt:segment',               // { meetingId, segment }
   SEGMENT_UPDATE: 'rt:segment-update', // { meetingId, segment }
-  PARTIAL: 'rt:partial',               // { meetingId, source, speaker, finalText, pendingText }
+  PARTIAL: 'rt:partial',               // { meetingId, source, speaker, speakerKey, finalText, pendingText }
   STATUS: 'rt:status',                 // { meetingId, source, status, detail }
   LEVELS: 'rt:levels',                 // { meetingId, levels: { them, me } }
   TRACK_ENDED: 'rt:track-ended',       // { meetingId, source }（offscreen → SW）
@@ -33,6 +33,7 @@ export const EVT = {
   PRESENCE: 'cs:presence',             // { inCall, platform, signal, url }（内容脚本 → SW）
   MIC_STATE: 'cs:mic',                 // { muted: true|false|null, platform, signal }（内容脚本 → SW）
   MIC_MUTED: 'rt:mic-muted',           // { meetingId, muted }（offscreen → 页面）
+  SPEAKERS: 'meeting:speakers',        // { meetingId }：说话人改名 / 合并了（页面 → 页面）
 };
 
 // 转写状态

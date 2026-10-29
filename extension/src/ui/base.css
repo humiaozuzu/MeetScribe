@@ -118,3 +118,23 @@ html:lang(en) .seg.async .meta::after { content: 'filled'; }
 .level > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .2s; }
 .level.muted > i { background: var(--text-faint); }
 .chip.muted { background: var(--danger-soft); color: var(--danger); }
+
+/* 说话人：可点击改名（ui/speakers.js） */
+.seg button.who { border: none; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--them); cursor: pointer; }
+.seg button.who:hover { text-decoration: underline; background: none; }
+.spk-dialog { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); padding: 16px; width: min(380px, calc(100vw - 32px)); }
+.spk-dialog::backdrop { background: rgb(0 0 0 / .3); }
+.spk-dialog form { display: grid; gap: 10px; }
+.spk-dialog h3 { margin: 0; font-size: 15px; }
+.spk-field { display: grid; gap: 4px; }
+.spk-merge { display: grid; gap: 6px; }
+.spk-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.spk-chips .chip { border: none; cursor: pointer; }
+.spk-chips .chip:hover { background: var(--them-soft); color: var(--them); }
+.spk-err { color: var(--danger); font-size: 12px; }
+.spk-err:empty { display: none; }
+.spk-actions { display: flex; gap: 8px; align-items: center; }
+.spk-actions .spacer { flex: 1; }
+.spk-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.spk-bar .chip { border: none; cursor: pointer; }
+.spk-bar .chip:hover { background: var(--them-soft); color: var(--them); }

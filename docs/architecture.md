@@ -76,6 +76,16 @@ connecting ──open──► live ──close──► reconnecting ──(bac
 - Translation tokens (`translation_status: 'translation'`) attach to the current segment, or, if they arrive late, to the last committed one (`onUpdate`).
 - `tokensToSegments()` turns async results into segments. It splits on a speaker change, a pause longer than 1.5 s, or a sentence end once the segment is longer than 15 s. It can optionally keep only tokens that fall inside given gaps.
 
+## Speakers (`speakers.js`)
+
+Soniox speaker numbers are only valid inside one transcription session. A real-time reconnect, rotation or `reconfigure()` starts a new WebSocket session and the numbering starts over, and every async run has its own numbering. Soniox has no session resume and no voiceprints. So a segment stores a speaker key that includes the session, and names live on the meeting:
+
+- `segment.speakerKey`: `rt<sessionNo>:<n>` (real time), `a<run>:<n>` (full re-transcription), `g<run>:<n>` (gap fill), `them` (other side without diarization). `me` segments have none. Segments recorded before this existed get a key derived from `speaker` and `origin` (`segmentKey()`).
+- `meeting.speakers = { [key]: { name } | { alias: key } }`. `alias` means "same person as" (a merge). Names hang on the canonical key at the end of the alias chain. Segments are never rewritten.
+- `buildSpeakerView()` lists the people in a meeting in order of first appearance. Unnamed people show as `对方 n` / `Speaker n`, where `n` is that order, not the Soniox number, so people from a new session get new numbers instead of reusing someone else's.
+- One entry point for rename and merge (like Notta): click a speaker name in History or the side panel. Typing a name renames every line of that person. Typing the name of someone already in the meeting, or picking them from the list, merges the two. Pages broadcast `meeting:speakers` so other open pages relabel in place.
+- After a full re-transcription, `inheritSpeakerNames()` carries names over by time overlap: a new speaker gets an old name only when they are each other's best match and the overlap covers at least 30 % of the new speaker's talk time. It never gives one name to two new speakers and never merges automatically. Keys that no segment uses any more are pruned. Gap-fill speakers do not overlap real-time segments, so they start unnamed and are merged by hand.
+
 ## After-meeting jobs (`retranscribe.js`, `soniox-async.js`)
 
 ```
@@ -126,14 +136,14 @@ The extension pages (popup, side panel, history, options) are translated into Ch
 - `src/lib/i18n.js` (pure): `resolveUiLang(setting, navigator.languages)` picks the setting if supported, else the first supported browser language (base tag only, so `zh-TW` → `zh`), else `zh`. `t(key, params)` looks up the current language, then `zh`, then returns the key.
 - `src/ui/i18n.js`: `initI18n()` reads `settings.uiLanguage` (`''` = follow browser), sets `<html lang>`, and fills elements marked `data-i18n` (text), `data-i18n-placeholder` and `data-i18n-title`. Each page awaits it at module top level before rendering. HTML keeps the Chinese text as a fallback; `<html data-i18n-pending>` hides the body until translation is done (CSS reveals it after 1 s regardless).
 - Changing the language on the options page reloads that page. Other open pages switch the next time they open (the history page is not reloaded because it may be running a retranscription job).
-- Not translated: program-level text is English, like logs. That covers `Error` messages thrown in `src/lib`, the service worker and the offscreen document (pages show them after a translated prefix, e.g. 开始失败：a meeting is already being recorded), and retranscription progress from `soniox-async.js`. Exported files are English regardless of UI language: `transcript.md` (headings, `Me` / `Others` / `Speaker N`) and `them.webm` / `me.webm`. The manifest description and shortcut description are localized separately with Chrome `_locales` (`extension/_locales/{en,zh_CN,ja}/messages.json`, `default_locale: en`, referenced as `__MSG_key__`). Chrome picks them from the browser language, not from the MeetScribe UI language setting. The name `MeetScribe` is not translated.
+- Not translated: program-level text is English, like logs. That covers `Error` messages thrown in `src/lib`, the service worker and the offscreen document (pages show them after a translated prefix, e.g. 开始失败：a meeting is already being recorded), and retranscription progress from `soniox-async.js`. Exported files are English regardless of UI language: `transcript.md` (headings, `Me` / `Others` / `Speaker N`; names the user typed are written as typed) and `them.webm` / `me.webm`. The manifest description and shortcut description are localized separately with Chrome `_locales` (`extension/_locales/{en,zh_CN,ja}/messages.json`, `default_locale: en`, referenced as `__MSG_key__`). Chrome picks them from the browser language, not from the MeetScribe UI language setting. The name `MeetScribe` is not translated.
 
 ## Storage (IndexedDB `meetscribe`, v1)
 
 | Store | Key | Fields |
 |---|---|---|
-| `meetings` | `id` (uuid) | `title, url, startedAt, endedAt, status ('recording'\|'done'\|'interrupted'), stopReason, tracks{them,me}{mimeType, chunks, bytes, startOffsetMs, pcmStartOffsetMs, seconds, transcription}, gaps[{source,startMs,endMs,reason,filled}], jobs[], transcription{enabled, model, languageHints, languageChanges[{atMs,from,languageHints}], translationTarget}, micError, exportPending, retranscribed` |
-| `segments` | auto | `meetingId (idx), source, speaker, language, startMs, endMs, text, translation, origin ('realtime'\|'async')` |
+| `meetings` | `id` (uuid) | `title, url, startedAt, endedAt, status ('recording'\|'done'\|'interrupted'), stopReason, tracks{them,me}{mimeType, chunks, bytes, startOffsetMs, pcmStartOffsetMs, seconds, transcription}, gaps[{source,startMs,endMs,reason,filled}], jobs[], transcription{enabled, model, languageHints, languageChanges[{atMs,from,languageHints}], translationTarget}, micError, exportPending, retranscribed, speakers{[speakerKey]: {name}\|{alias}}` |
+| `segments` | auto | `meetingId (idx), source, speaker, speakerKey, language, startMs, endMs, text, translation, origin ('realtime'\|'async')` |
 | `chunks` | auto | `meetingId (idx), source, seq, blob, size, at` |
 | `logs` | auto | `ts (idx), level, ctx, msg, data, meetingId?, source?` — kept for 14 days, at most 50k entries |
 
@@ -145,7 +155,7 @@ All constants live in `src/lib/messages.js`.
 
 - Commands to the service worker (`target: 'sw'`): `sw:start`, `sw:stop`, `sw:get-state`, `sw:set-languages`, `sw:cancel-auto-stop`.
 - Commands to the offscreen document (`target: 'offscreen'`): `offscreen:start|stop|ping|get-live|set-languages|set-mic-muted`.
-- Broadcasts: `rt:segment`, `rt:segment-update`, `rt:partial`, `rt:status`, `rt:levels`, `rt:languages`, `rt:track-ended`, `meeting:state`, `meeting:ended`, `meeting:auto-stop`, `rt:mic-muted`, `cs:presence`, `cs:mic`.
+- Broadcasts: `rt:segment`, `rt:segment-update`, `rt:partial`, `rt:status`, `rt:levels`, `rt:languages`, `rt:track-ended`, `meeting:state`, `meeting:ended`, `meeting:auto-stop`, `meeting:speakers`, `rt:mic-muted`, `cs:presence`, `cs:mic`.
 
 ## Failure handling summary
 

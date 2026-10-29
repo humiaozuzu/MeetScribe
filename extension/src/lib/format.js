@@ -1,5 +1,7 @@
 // 展示与导出用的格式化函数（纯逻辑，可单元测试）。
 
+import { buildSpeakerView, segmentKey } from './speakers.js';
+
 export function formatClock(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(total / 3600);
@@ -23,10 +25,15 @@ export function formatBytes(n) {
   return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
 }
 
-// 导出文件里的说话人（英文，不随界面语言变）；界面上用 ui/common.js 的 speakerName。
-export function speakerLabel(seg) {
+// 导出文件里的说话人（默认标签英文，不随界面语言变）；界面上用 ui/common.js 的 speakerName。
+// view 来自 buildSpeakerView：有名字用名字，否则按本场编号 Speaker n。
+export function speakerLabel(seg, view) {
   if (seg.source === 'me') return 'Me';
-  return seg.speaker ? `Speaker ${seg.speaker}` : 'Others';
+  const key = segmentKey(seg);
+  const e = view?.byKey.get(key);
+  if (e?.name) return e.name;
+  const n = key === 'them' ? null : e?.n ?? seg.speaker;
+  return n ? `Speaker ${n}` : 'Others';
 }
 
 // 去掉会议页面标题里的产品后缀，例如 "Meet - abc-defg-hij" / "xxx | Microsoft Teams"。
@@ -59,8 +66,9 @@ export function buildMarkdown(meeting, segments) {
   lines.push('');
   lines.push('## Transcript');
   lines.push('');
+  const view = buildSpeakerView(meeting.speakers, segments);
   for (const s of segments) {
-    lines.push(`**[${formatClock(s.startMs)}] ${speakerLabel(s)}**: ${s.text}`);
+    lines.push(`**[${formatClock(s.startMs)}] ${speakerLabel(s, view)}**: ${s.text}`);
     if (s.translation) lines.push(`> ${s.translation}`);
     lines.push('');
   }
