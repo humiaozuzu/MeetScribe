@@ -27,6 +27,7 @@ export class TrackPipeline {
     this.status = STATUS.OFF;
     this.statusDetail = null;
     this.level = 0;
+    this.muted = false;
     this.partial = null;
     this.recordInfo = { mimeType: RECORDER_MIME, chunks: 0, bytes: 0, startOffsetMs: null };
     this.totalSamples = 0;
@@ -187,6 +188,14 @@ export class TrackPipeline {
       },
     });
     this.rt.start();
+    if (this.muted) this.rt.setPaused(true);
+  }
+
+  // 会议里的麦克风静音状态（只用于 'me'）。录音照常进行，转写暂停，见 SonioxRealtime.setPaused。
+  setMuted(muted) {
+    if (this.muted === muted) return;
+    this.muted = muted;
+    this.rt?.setPaused(muted);
   }
 
   setLanguages(languageHints) {

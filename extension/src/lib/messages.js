@@ -16,6 +16,7 @@ export const OFFSCREEN = {
   PING: 'offscreen:ping',
   GET_LIVE: 'offscreen:get-live', // 侧边栏打开时取当前状态
   SET_LANGUAGES: 'offscreen:set-languages', // { languageHints }
+  SET_MIC_MUTED: 'offscreen:set-mic-muted', // { muted, signal }：会议里麦克风静音状态
 };
 
 export const EVT = {
@@ -30,6 +31,8 @@ export const EVT = {
   LANGUAGES: 'rt:languages',           // { meetingId, languageHints }
   AUTO_STOP: 'meeting:auto-stop',      // { meetingId, pending, deadline }（SW → 页面）
   PRESENCE: 'cs:presence',             // { inCall, platform, signal, url }（内容脚本 → SW）
+  MIC_STATE: 'cs:mic',                 // { muted: true|false|null, platform, signal }（内容脚本 → SW）
+  MIC_MUTED: 'rt:mic-muted',           // { meetingId, muted }（offscreen → 页面）
 };
 
 // 转写状态
@@ -38,6 +41,7 @@ export const STATUS = {
   CONNECTING: 'connecting',
   LIVE: 'live',
   RECONNECTING: 'reconnecting',
+  PAUSED: 'paused',         // 会议里麦克风静音：暂停转写，录音继续
   FAILED: 'failed',         // 不可恢复（key 无效、欠费）：仅录音
   CLOSED: 'closed',
 };

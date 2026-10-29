@@ -31,6 +31,7 @@ export const STATUS_TEXT = {
   [STATUS.CONNECTING]: ['连接中', ''],
   [STATUS.LIVE]: ['转写中', 'ok'],
   [STATUS.RECONNECTING]: ['重连中，录音继续', 'warn'],
+  [STATUS.PAUSED]: ['暂停转写', ''],
   [STATUS.FAILED]: ['转写失败，录音继续', 'err'],
   [STATUS.CLOSED]: ['已结束', ''],
 };

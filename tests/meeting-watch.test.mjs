@@ -7,7 +7,8 @@ const SRC = readFileSync(new URL('../extension/src/content/meeting-watch.js', im
 // 用最小的假 DOM 运行内容脚本，手动推进轮询。
 function run(hostname, dom) {
   const sent = [];
-  let tick = null;
+  const mic = [];
+  const timers = new Map(); // 间隔 → 回调（在场轮询 2000ms，静音轮询 500ms）
   const g = {
     window: {},
     location: { hostname, href: `https://${hostname}/abc` },
@@ -15,12 +16,17 @@ function run(hostname, dom) {
       querySelector: (sel) => dom.query(sel),
       querySelectorAll: (sel) => dom.queryAll(sel),
     },
-    chrome: { runtime: { sendMessage: (m) => { sent.push(m); return Promise.resolve(); } } },
-    setInterval: (fn) => { tick = fn; return 1; },
+    chrome: { runtime: { sendMessage: (m) => { (m.type === 'cs:mic' ? mic : sent).push(m); return Promise.resolve(); } } },
+    setInterval: (fn, ms) => { timers.set(ms, fn); return ms; },
     clearInterval: () => {},
   };
   new Function(...Object.keys(g), SRC)(...Object.values(g));
-  return { sent, tick: () => tick() };
+  return {
+    sent,
+    mic,
+    tick: () => timers.get(2000)(),
+    micTick: () => timers.get(500)(),
+  };
 }
 
 function meetDom() {
@@ -29,7 +35,7 @@ function meetDom() {
   return {
     state,
     query: () => null, // 不依赖 jsname，走图标文字
-    queryAll: () => (state.inCall ? [{ childElementCount: 0, textContent: 'mic' }, icon] : []),
+    queryAll: (sel) => (sel === '[data-is-muted]' ? [] : state.inCall ? [{ childElementCount: 0, textContent: 'mic' }, icon] : []),
   };
 }
 
@@ -66,4 +72,54 @@ test('teams: hangup button detected', () => {
   const dom = { query: (sel) => (sel.includes('#hangup-button') ? { id: 'hangup-button', getAttribute: () => null } : null), queryAll: () => [] };
   const { sent } = run('teams.microsoft.com', dom);
   assert.deepEqual(sent[0], { type: 'cs:presence', inCall: true, platform: 'teams', signal: '#hangup-button', url: 'https://teams.microsoft.com/abc' });
+});
+
+// Meet 工具栏里摄像头和麦克风按钮都有 data-is-muted，靠图标 / aria-label 区分。
+function meetButton({ icon, label, muted }) {
+  return {
+    getAttribute: (k) => ({ 'data-is-muted': String(muted), 'aria-label': label || null }[k] ?? null),
+    querySelectorAll: () => (icon ? [{ childElementCount: 0, textContent: icon }] : []),
+  };
+}
+
+function meetMicDom(buttons) {
+  return { query: () => null, queryAll: (sel) => (sel === '[data-is-muted]' ? buttons() : []) };
+}
+
+test('meet mic: mute state from data-is-muted on the mic button, camera ignored', () => {
+  let muted = false;
+  const cam = meetButton({ icon: 'videocam_off', muted: true });
+  const { mic, micTick } = run('meet.google.com', meetMicDom(() => [cam, meetButton({ icon: muted ? 'mic_off' : 'mic', muted })]));
+  assert.deepEqual(mic, [{ type: 'cs:mic', muted: false, platform: 'meet', signal: 'data-is-muted' }]);
+  micTick();
+  assert.equal(mic.length, 1, 'no duplicate reports');
+  muted = true;
+  micTick();
+  assert.equal(mic.at(-1).muted, true);
+});
+
+test('meet mic: falls back to aria-label when no icon text', () => {
+  const { mic } = run('meet.google.com', meetMicDom(() => [meetButton({ label: '关闭麦克风 (⌘ + d)', muted: false })]));
+  assert.equal(mic[0].muted, false);
+});
+
+test('meet mic: button missing briefly is not reported, long absence reports unknown', () => {
+  let present = true;
+  const { mic, micTick } = run('meet.google.com', meetMicDom(() => (present ? [meetButton({ icon: 'mic_off', muted: true })] : [])));
+  assert.equal(mic.at(-1).muted, true);
+  present = false;
+  micTick(); micTick(); micTick();
+  assert.equal(mic.length, 1, 'redraw flicker ignored');
+  micTick();
+  assert.equal(mic.at(-1).muted, null);
+});
+
+test('teams mic: data-state on microphone button', () => {
+  let state = 'mic-off';
+  const dom = { query: (sel) => (sel.includes('#microphone-button') ? { getAttribute: (k) => (k === 'data-state' ? state : null) } : null), queryAll: () => [] };
+  const { mic, micTick } = run('teams.microsoft.com', dom);
+  assert.deepEqual(mic[0], { type: 'cs:mic', muted: true, platform: 'teams', signal: 'data-state=mic-off' });
+  state = 'mic';
+  micTick();
+  assert.equal(mic.at(-1).muted, false);
 });

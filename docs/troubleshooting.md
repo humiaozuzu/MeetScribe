@@ -34,6 +34,7 @@ The first line is a header with the extension version, user agent, redacted sett
 | Missing audio in the recording | `MediaRecorder error`, `save audio chunk failed`, `recorder stop timed out` |
 | Volume / silence | `audio level (30s)` (`avgRms` 0 means silence), `track muted` |
 | Microphone missing | `microphone unavailable` |
+| Muted in the meeting but still transcribed, or never transcribed | `meeting mic state` (see `muted`, `signal`), `mic mute state`, `soniox paused`, `soniox resumed`, `soniox closing session while muted` |
 | Language switch | `languages changed during meeting`, `soniox reconfigure` |
 | Auto stop did not fire, or fired wrongly | `meeting presence` (see `signal`), `auto stop scheduled`, `auto stop cancelled`, `not in call yet` |
 | Gap fill / re-transcription | `retranscribe`, `soniox async transcription failed`, `soniox file uploaded` |
@@ -52,6 +53,9 @@ Increase **断句等待** (endpoint delay) in options, for example to 800–1000
 
 **Recording does not stop after leaving the call.**
 Look at the `meeting presence` lines. If `inCall` never became `true`, the hang-up button detection did not match. Meet or Teams may have changed their page, so open an issue with the log. As a workaround, stop manually.
+
+**I muted myself in the meeting, but my speech is still transcribed (or I am not transcribed after unmuting).**
+Look at the `meeting mic state` lines. `muted: null` means the mic button was not found, so MeetScribe treats you as unmuted. Meet or Teams may have changed their page; open an issue with the log. Muting only pauses live transcription: the "me" recording still contains everything, so a full re-transcription will include speech made while muted.
 
 **"转写缺口" (gap) shown although nothing seemed missing.**
 Gaps are stretches of audio that never reached Soniox (network drop, or no key). Click **补转缺口** (fill gaps) to transcribe them from the recording. Versions before the stop-race fix could report a 1–2 s gap at the very end; that one is harmless.

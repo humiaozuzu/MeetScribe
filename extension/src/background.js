@@ -113,7 +113,8 @@ async function startRecording(tabId, languageHints) {
     };
     await putMeeting(meeting);
 
-    const res = await sendToOffscreen({ type: OFFSCREEN.START, meeting, streamId, settings });
+    const micMuted = (await getMicStates())[tabId]?.muted ?? null;
+    const res = await sendToOffscreen({ type: OFFSCREEN.START, meeting, streamId, settings, micMuted });
     if (!res?.ok) throw new Error(res?.error || 'offscreen start failed');
 
     // 内容脚本可能在扩展重载前就打开的页面里不存在，补注入一次（非 Meet/Teams 页面会失败，忽略）
@@ -126,6 +127,9 @@ async function startRecording(tabId, languageHints) {
       meetingId: meeting.id, tabId, title: meeting.title, startedAt: meeting.startedAt, micError: res.micError || null,
       host, seenInCall: presence?.inCall === true, autoStopDeadline: null, autoStopSuppressed: false,
     });
+    // 开始期间静音状态可能变了（那时还不算"录制中"，没有转发）
+    const latestMuted = (await getMicStates())[tabId]?.muted ?? null;
+    if (latestMuted !== micMuted) await sendToOffscreen({ type: OFFSCREEN.SET_MIC_MUTED, muted: latestMuted, signal: 'sync-after-start' }).catch((e) => log.warn('sync mic muted failed', e));
     log.info('recording active', { meetingId: meeting.id, micError: res.micError });
     return { ok: true, meetingId: meeting.id, micError: res.micError || null };
   } catch (e) {
@@ -224,6 +228,27 @@ async function onPresence(msg, tabId) {
   await scheduleAutoStop(`left-call (${msg.platform})`);
 }
 
+// ---------- 会议内麦克风静音 ----------
+// 内容脚本报告 Meet / Teams 里的静音状态（只在变化时报告）。录制中的标签页转发给 offscreen，
+// 静音期间暂停"我"这一路的转写（录音照常）。
+
+async function getMicStates() {
+  const { micStates } = await chrome.storage.session.get('micStates');
+  return micStates || {};
+}
+
+async function onMicState(msg, tabId) {
+  const micStates = await getMicStates();
+  micStates[tabId] = { muted: msg.muted, signal: msg.signal, at: Date.now() };
+  await chrome.storage.session.set({ micStates });
+  const { active } = await getState();
+  const recordingThisTab = active?.tabId === tabId;
+  log.info('meeting mic state', { tabId, muted: msg.muted, platform: msg.platform, signal: msg.signal, recordingThisTab });
+  if (!recordingThisTab) return;
+  const res = await sendToOffscreen({ type: OFFSCREEN.SET_MIC_MUTED, muted: msg.muted, signal: msg.signal });
+  if (!res?.ok) log.warn('offscreen set mic muted failed', res);
+}
+
 async function scheduleAutoStop(reason) {
   const settings = await getSettings();
   if (!settings.autoStopOnLeave) {
@@ -297,6 +322,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg?.type === EVT.PRESENCE) {
     if (sender.tab?.id != null) onPresence(msg, sender.tab.id).catch((e) => log.error('presence handling failed', e));
+    return false;
+  }
+  if (msg?.type === EVT.MIC_STATE) {
+    if (sender.tab?.id != null) onMicState(msg, sender.tab.id).catch((e) => log.error('mic state handling failed', e));
     return false;
   }
   if (msg?.target !== 'sw') return false;

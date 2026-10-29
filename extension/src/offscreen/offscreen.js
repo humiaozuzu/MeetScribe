@@ -21,6 +21,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     [OFFSCREEN.STOP]: () => stop(msg.reason),
     [OFFSCREEN.GET_LIVE]: async () => getLive(),
     [OFFSCREEN.SET_LANGUAGES]: () => setLanguages(msg.languageHints),
+    [OFFSCREEN.SET_MIC_MUTED]: async () => setMicMuted(msg.muted, msg.signal),
   };
   const h = handlers[msg.type];
   if (!h) return false;
@@ -31,7 +32,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-async function start({ meeting, streamId, settings }) {
+async function start({ meeting, streamId, settings, micMuted }) {
   if (session) throw new Error('already recording');
   setLogLevel(settings.logLevel);
   const log = baseLog.child({ meetingId: meeting.id });
@@ -61,7 +62,7 @@ async function start({ meeting, streamId, settings }) {
   const playback = ctx.createMediaStreamSource(tabStream);
   playback.connect(ctx.destination);
 
-  session = { meeting, ctx, playback, pipelines: {}, gaps: [], log, settings };
+  session = { meeting, ctx, playback, pipelines: {}, gaps: [], log, settings, micMuted: micMuted ?? null };
 
   const onGap = (gap) => {
     log.warn('transcription gap recorded', gap);
@@ -91,6 +92,7 @@ async function start({ meeting, streamId, settings }) {
         },
       });
       session.pipelines.me = new TrackPipeline({ source: 'me', stream: micStream, ctx, meeting, settings, log, onGap });
+      session.pipelines.me.setMuted(session.micMuted === true);
       await session.pipelines.me.start();
     } catch (e) {
       micError = `${e.name}: ${e.message}`;
@@ -108,7 +110,7 @@ async function start({ meeting, streamId, settings }) {
     m.tracks = trackSummaries();
   }).catch((e) => log.error('update meeting failed', e));
 
-  log.info('recording started', { tracks: Object.keys(session.pipelines), micError });
+  log.info('recording started', { tracks: Object.keys(session.pipelines), micError, micMuted: session.micMuted });
   return { ok: true, micError };
 }
 
@@ -182,9 +184,21 @@ async function setLanguages(languageHints) {
   return { ok: true };
 }
 
+// 内容脚本检测到的会议内麦克风静音状态（经 SW 转发）。null = 检测不到，按未静音处理。
+function setMicMuted(muted, signal) {
+  if (!session) return { ok: false, error: 'not recording' };
+  const s = session;
+  if (s.micMuted === muted) return { ok: true };
+  s.micMuted = muted;
+  s.log.info('mic mute state', { muted, signal, atMs: Date.now() - s.meeting.startedAt });
+  s.pipelines.me?.setMuted(muted === true);
+  broadcast({ type: EVT.MIC_MUTED, meetingId: s.meeting.id, muted });
+  return { ok: true };
+}
+
 function getLive() {
   if (!session) return { ok: true, active: false };
-  const live = { ok: true, active: true, meetingId: session.meeting.id, languageHints: session.settings.languageHints, sources: {} };
+  const live = { ok: true, active: true, meetingId: session.meeting.id, languageHints: session.settings.languageHints, micMuted: session.micMuted, sources: {} };
   for (const [k, p] of Object.entries(session.pipelines)) {
     live.sources[k] = { status: p.status, detail: p.statusDetail, partial: p.partial, level: p.level };
   }

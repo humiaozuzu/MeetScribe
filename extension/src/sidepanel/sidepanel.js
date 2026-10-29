@@ -18,6 +18,7 @@ let active = null;
 let timer = null;
 const sourceState = {};   // source -> { status, detail, level }
 const partials = {};      // source -> partial
+let micMuted = null;      // 会议里是否静音：true / false / null（检测不到）
 let stickToBottom = true;
 let autoStopDeadline = null;
 let autoStopTicker = null;
@@ -65,10 +66,12 @@ function renderSources() {
     if (!st) continue;
     const bar = el('i');
     bar.style.width = `${Math.min(100, Math.round(Math.sqrt(st.level || 0) * 300))}%`;
+    const muted = src === 'me' && micMuted === true;
     box.append(el('span', { class: `src ${src}` },
       el('span', { class: 'name', text: name }),
-      el('span', { class: 'level', 'data-src': src }, bar),
-      statusChip(st.status, st.detail)));
+      el('span', { class: `level${muted ? ' muted' : ''}`, 'data-src': src, title: muted ? '会议里已静音：这一路仍在录音，但不转写' : null }, bar),
+      // 静音时只显示一个"已静音"，代替状态标签（否则一行放不下）
+      muted ? el('span', { class: 'chip muted', title: '会议里已静音：暂停转写，录音继续' }, el('span', { class: 'dot' }), '已静音') : statusChip(st.status, st.detail)));
   }
   renderNotices();
 }
@@ -168,6 +171,7 @@ async function refresh() {
     $('#timer').textContent = meetingId ? '已结束' : '';
     for (const k of Object.keys(sourceState)) delete sourceState[k];
     for (const k of Object.keys(partials)) delete partials[k];
+    micMuted = null;
     renderSources();
     renderPartials();
     return;
@@ -179,6 +183,7 @@ async function refresh() {
   const live = await sendToOffscreen(OFFSCREEN.GET_LIVE).catch(() => null);
   if (live?.active) {
     picker.setValue(live.languageHints);
+    micMuted = live.micMuted ?? null;
     for (const [src, s] of Object.entries(live.sources)) {
       sourceState[src] = { status: s.status, detail: s.detail, level: s.level };
       if (s.partial) partials[src] = s.partial;
@@ -208,6 +213,10 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
     case EVT.STATUS:
       sourceState[msg.source] = { ...(sourceState[msg.source] || {}), status: msg.status, detail: msg.detail };
+      renderSources();
+      break;
+    case EVT.MIC_MUTED:
+      micMuted = msg.muted;
       renderSources();
       break;
     case EVT.LANGUAGES:

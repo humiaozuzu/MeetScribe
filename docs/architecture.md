@@ -13,7 +13,7 @@
 |---|---|---|---|
 | Service worker | `src/background.js` | Event-driven; may be suspended | Start/stop, `tabCapture.getMediaStreamId`, offscreen lifecycle, session state (`chrome.storage.session`), auto stop, recovering stale meetings |
 | Offscreen document | `src/offscreen/*` | One meeting | Owns the `MediaStream`s, `AudioContext`, recorders and Soniox WebSockets |
-| Content script | `src/content/meeting-watch.js` | Meet/Teams tab | Reports in-call / left-call from the presence of the hang-up button |
+| Content script | `src/content/meeting-watch.js` | Meet/Teams tab | Reports in-call / left-call from the presence of the hang-up button, and the in-meeting mic mute state |
 | Popup | `src/popup/*` | While open | Choose languages, start/stop |
 | Side panel | `src/sidepanel/*` | While open | Live captions, status, levels, language switch, auto-stop countdown |
 | History | `src/history/*` | Tab | List, search, synced playback, retranscribe, export, delete |
@@ -56,11 +56,14 @@ connecting ──open──► live ──close──► reconnecting ──(bac
      │                 │                                    ▲
      │                 ├─ error 400/401/402/403 ──► failed  │ (recording continues)
      │                 ├─ 290 min or reconfigure ──► rotate (send "", reconnect now)
+     │                 ├─ setPaused(true) ──► paused (send silence) ──10 s──► send "", stay closed
+     │                 │                         └─ setPaused(false) ──► live / reconnect now
      │                 └─ stop() ──► send "" ── wait finished/close (≤8 s) ──► closed
 ```
 
 - **Buffer.** While not live, the last 10 s of PCM is kept and flushed on (re)connect.
 - **Gaps.** The client tracks `sentUpTo`, the last sample handed to Soniox. When a new session starts after `sentUpTo`, or `stop()` happens with unsent audio, it calls `onGap(fromSample, toSample)`. Audio arriving after `stop()` is ignored, so it is not reported as a gap.
+- **Mute.** Soniox bills real-time by stream duration, not by audio sent, so keepalive alone saves nothing. While muted, the client sends zeros in place of the mic audio for a 10 s grace period, which keeps the timeline continuous across short mutes. After that it ends the stream. Unmuting opens a new session, with audio buffered meanwhile. Muted audio is never reported as a gap. The recorder branch is unaffected, so the recording still contains it.
 - **Timeline.** `onSessionStart(firstSample)` lets the track convert session-relative token times to meeting time: `pcmStartOffsetMs + firstSample / 16`.
 
 ## Transcript assembly (`transcript.js`)
@@ -96,6 +99,19 @@ tab navigates to another host → same as left (if seenInCall)
 
 The timer is re-armed from `autoStopDeadline` when the service worker wakes up.
 
+## Mic mute
+
+```
+content script: mic button state  (poll 500 ms; "unknown" needs ~2 s of misses)
+   └─► SW cs:mic {muted: true|false|null}  → chrome.storage.session.micStates[tabId]
+         recording this tab → offscreen:set-mic-muted → pipelines.me.setMuted → SonioxRealtime.setPaused
+                              broadcast rt:mic-muted → side panel shows 已静音 and greys the "me" level bar
+```
+
+`null` (button not found) means "not muted", so transcription keeps going if detection breaks. The state is passed in `offscreen:start` and synced again right after start.
+
+Signals used: Meet, the `[data-is-muted]` element whose icon text is `mic`/`mic_off` or whose `aria-label` names the microphone (the camera button also has `data-is-muted`). Teams, `#microphone-button` `data-state` (`mic` / `mic-off`).
+
 Signals used: Meet `[jsname="CQylAd"]` or a leaf element inside a button whose text is `call_end` (Material icon). Teams `#hangup-button` or `data-tid*="hangup"`. These are language-independent, but they depend on how Meet and Teams build their pages.
 
 ## Storage (IndexedDB `meetscribe`, v1)
@@ -107,15 +123,15 @@ Signals used: Meet `[jsname="CQylAd"]` or a leaf element inside a button whose t
 | `chunks` | auto | `meetingId (idx), source, seq, blob, size, at` |
 | `logs` | auto | `ts (idx), level, ctx, msg, data, meetingId?, source?` — kept for 14 days, at most 50k entries |
 
-`chrome.storage.local.settings` holds the user settings. `chrome.storage.session` holds `active` (the current recording) and `presence` (the latest in-call state per tab).
+`chrome.storage.local.settings` holds the user settings. `chrome.storage.session` holds `active` (the current recording), `presence` (the latest in-call state per tab) and `micStates` (the latest mic mute state per tab).
 
 ## Messages
 
 All constants live in `src/lib/messages.js`.
 
 - Commands to the service worker (`target: 'sw'`): `sw:start`, `sw:stop`, `sw:get-state`, `sw:set-languages`, `sw:cancel-auto-stop`.
-- Commands to the offscreen document (`target: 'offscreen'`): `offscreen:start|stop|ping|get-live|set-languages`.
-- Broadcasts: `rt:segment`, `rt:segment-update`, `rt:partial`, `rt:status`, `rt:levels`, `rt:languages`, `rt:track-ended`, `meeting:state`, `meeting:ended`, `meeting:auto-stop`, `cs:presence`.
+- Commands to the offscreen document (`target: 'offscreen'`): `offscreen:start|stop|ping|get-live|set-languages|set-mic-muted`.
+- Broadcasts: `rt:segment`, `rt:segment-update`, `rt:partial`, `rt:status`, `rt:levels`, `rt:languages`, `rt:track-ended`, `meeting:state`, `meeting:ended`, `meeting:auto-stop`, `rt:mic-muted`, `cs:presence`, `cs:mic`.
 
 ## Failure handling summary
 

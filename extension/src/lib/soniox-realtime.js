@@ -7,6 +7,9 @@
 //   - key 无效 / 欠费等不可恢复错误 → FAILED，不再重连（录音不受影响）。
 //   - 单流 300 分钟上限：到 ROTATE_AFTER_MS 主动换新连接。
 //   - 长时间没发音频时发 keepalive。
+//   - 会议里麦克风静音 → setPaused(true)：Soniox 按流的时长计费（不是按音频），所以静音
+//     超过 PAUSE_CLOSE_AFTER_MS 就关闭连接，取消静音再重连。宽限期内发静音帧代替真实音频，
+//     时间轴保持连续，短暂开关麦不必重连。静音期间的音频不转写，也不算缺口。
 //
 // 采样位置：push(buf, startSample) 带上该块首个样本在整条音轨中的序号（16kHz），
 // onSessionStart(firstSample) 让调用方把 token 的会话内时间换算到会议时间轴。
@@ -23,6 +26,7 @@ const ROTATE_AFTER_MS = 290 * 60_000;
 const STOP_TIMEOUT_MS = 8_000;
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const STATS_EVERY_MS = 60_000;
+const PAUSE_CLOSE_AFTER_MS = 10_000;
 
 // 这些错误重连也没用。
 const FATAL_CODES = new Set([400, 401, 402, 403]);
@@ -58,6 +62,9 @@ export class SonioxRealtime {
     this.live = false;          // 已发送配置、可推音频
     this.stopping = false;
     this.rotating = false;
+    this.paused = false;        // 会议中静音：不转写真实音频
+    this.pauseClosed = false;   // 静音超过宽限期，连接已关闭（或正在关闭）
+    this.resumeAfterClose = false; // 关闭途中取消了静音：关闭后立即重连
     this.fatal = null;
     this.attempt = 0;
     this.pending = [];          // 未发送的 { buf, startSample, samples }
@@ -85,7 +92,7 @@ export class SonioxRealtime {
 
   _connect() {
     clearTimeout(this.timers.reconnect);
-    if (this.stopping) return;
+    if (this.stopping || this.pauseClosed) return;
     const sessionNo = ++this.sessionNo;
     this._setStatus(this.attempt ? STATUS.RECONNECTING : STATUS.CONNECTING);
     this.log.info('soniox connecting', { sessionNo, attempt: this.attempt, config: this.config });
@@ -122,7 +129,7 @@ export class SonioxRealtime {
       this._flushPending();
       clearTimeout(this.timers.rotate);
       this.timers.rotate = setTimeout(() => this._rotate(), ROTATE_AFTER_MS);
-      this._setStatus(STATUS.LIVE);
+      this._setStatus(this.paused ? STATUS.PAUSED : STATUS.LIVE);
       // attempt 在收到第一个正常响应后才归零，避免"连上即被拒"时快速重连刷屏
     };
 
@@ -189,6 +196,16 @@ export class SonioxRealtime {
         this._setStatus(STATUS.FAILED, this.fatal);
         return;
       }
+      if (this.pauseClosed) {
+        this.log.info('soniox closed (mic muted)', info);
+        return;
+      }
+      if (this.resumeAfterClose) {
+        this.resumeAfterClose = false;
+        this.log.info('soniox closed while unmuting, reconnecting now', info);
+        this._connect();
+        return;
+      }
       if (this.rotating) {
         this.rotating = false;
         this.log.info('soniox rotated session closed, reconnecting now', info);
@@ -220,6 +237,57 @@ export class SonioxRealtime {
     return true;
   }
 
+  setPaused(paused) {
+    paused = !!paused;
+    if (paused === this.paused) return;
+    this.paused = paused;
+    if (this.stopping || this.fatal) return;
+    clearTimeout(this.timers.pauseClose);
+    if (paused) {
+      this.pausedAtSample = this.totalPushed;
+      this.log.info('soniox paused (mic muted)', { live: this.live, closeAfterMs: PAUSE_CLOSE_AFTER_MS });
+      this.timers.pauseClose = setTimeout(() => this._closeForPause(), PAUSE_CLOSE_AFTER_MS);
+      this._setStatus(STATUS.PAUSED);
+      return;
+    }
+    this.log.info('soniox resumed (mic unmuted)', { pauseClosed: this.pauseClosed, live: this.live });
+    if (!this.pauseClosed) {
+      this._setStatus(this.live ? STATUS.LIVE : this.attempt ? STATUS.RECONNECTING : STATUS.CONNECTING);
+      return;
+    }
+    this.pauseClosed = false;
+    if (this.ws) {
+      this.resumeAfterClose = true; // 旧连接还在收尾，onclose 后重连
+      return;
+    }
+    this.attempt = 0;
+    this._connect();
+  }
+
+  _closeForPause() {
+    if (!this.paused || this.stopping || this.fatal) return;
+    this.pauseClosed = true;
+    clearTimeout(this.timers.reconnect);
+    clearTimeout(this.timers.rotate);
+    // 静音前还没送出去的音频（断线缓存里的）已无法实时转写，记为缺口
+    if (this.pausedAtSample > this.sentUpTo) {
+      this.log.warn('soniox transcription gap (audio not sent before mute)', { fromSample: this.sentUpTo, toSample: this.pausedAtSample });
+      this.onGap(this.sentUpTo, this.pausedAtSample, 'disconnected');
+    }
+    this._dropPending();
+    this.sentUpTo = this.totalPushed;
+    const ws = this.ws;
+    this.log.info('soniox closing session while muted (stream time is billed)', { live: this.live, hasWs: !!ws });
+    if (this.live && ws?.readyState === WebSocket.OPEN) {
+      this.live = false;
+      try { ws.send(''); } catch (e) { this.log.warn('pause send end failed', e); }
+    } else if (ws) {
+      this.live = false;
+      this.ws = null; // 还没连上：直接丢弃，onclose 不再处理
+      try { ws.close(); } catch {}
+    }
+  }
+
   _rotate(reason = 'approaching 300 min limit') {
     if (!this.live || this.stopping) return;
     this.log.info('soniox rotating session', { reason });
@@ -234,6 +302,11 @@ export class SonioxRealtime {
     const samples = buf.byteLength / 2;
     this.totalPushed = startSample + samples;
     if (this.fatal) return;
+    if (this.pauseClosed) {
+      this.sentUpTo = this.totalPushed; // 静音中且连接已关：不转写，也不算缺口
+      return;
+    }
+    if (this.paused) buf = new ArrayBuffer(buf.byteLength); // 宽限期：发静音帧
     if (this.live && this.ws?.readyState === WebSocket.OPEN) {
       this._send(buf, startSample + samples);
       return;

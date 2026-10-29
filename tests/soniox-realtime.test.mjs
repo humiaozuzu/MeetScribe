@@ -165,6 +165,86 @@ test('reconfigure mid-session reconnects with new config without a gap', () => {
   mock.timers.reset();
 });
 
+test('pause: grace period sends silence, then closes the stream; no gap', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  FakeWS.instances = [];
+  const { rt, gaps, statuses } = makeRt();
+  rt.start();
+  const ws1 = FakeWS.instances[0];
+  ws1._open();
+  const speech = new Int16Array(1600).fill(1000).buffer;
+  rt.setPaused(true);
+  assert.equal(statuses.at(-1), 'paused');
+  rt.push(speech, 0);
+  assert.ok(new Int16Array(ws1.sent.at(-1)).every((v) => v === 0), 'muted audio replaced by silence');
+  mock.timers.tick(10_000);
+  assert.equal(ws1.sent.at(-1), '', 'stream asked to finish after grace period');
+  ws1._close(1000);
+  assert.equal(FakeWS.instances.length, 1, 'no reconnect while muted');
+  rt.push(speech, 1600);
+  assert.equal(ws1.sent.filter((d) => d instanceof ArrayBuffer).length, 1, 'nothing sent while closed');
+  rt.stop();
+  assert.deepEqual(gaps, [], 'muted audio is not a transcription gap');
+  mock.timers.reset();
+});
+
+test('unmute after close reconnects with a new session at the right sample', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  FakeWS.instances = [];
+  const { rt, gaps, sessions } = makeRt();
+  rt.start();
+  FakeWS.instances[0]._open();
+  rt.setPaused(true);
+  mock.timers.tick(10_000);
+  FakeWS.instances[0]._close(1000);
+  rt.push(pcm(1600), 0);             // 静音中
+  rt.setPaused(false);
+  assert.equal(FakeWS.instances.length, 2, 'reconnects on unmute');
+  rt.push(pcm(1600), 1600);          // 连接中，进缓存
+  const ws2 = FakeWS.instances[1];
+  ws2._open();
+  assert.deepEqual(sessions, [0, 1600]);
+  assert.equal(ws2.sent.length, 2, 'config + buffered audio');
+  assert.deepEqual(gaps, []);
+  rt.stop();
+  mock.timers.reset();
+});
+
+test('unmute while the paused stream is still closing reconnects after close', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  FakeWS.instances = [];
+  const { rt } = makeRt();
+  rt.start();
+  FakeWS.instances[0]._open();
+  rt.setPaused(true);
+  mock.timers.tick(10_000);
+  rt.setPaused(false);
+  assert.equal(FakeWS.instances.length, 1, 'waits for old stream to close');
+  FakeWS.instances[0]._close(1000);
+  assert.equal(FakeWS.instances.length, 2, 'reconnects right after close');
+  rt.stop();
+  mock.timers.reset();
+});
+
+test('short mute within grace period keeps the same session', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  FakeWS.instances = [];
+  const { rt, statuses } = makeRt();
+  rt.start();
+  FakeWS.instances[0]._open();
+  rt.setPaused(true);
+  mock.timers.tick(3000);
+  rt.setPaused(false);
+  mock.timers.tick(20_000);
+  assert.equal(FakeWS.instances.length, 1);
+  assert.equal(statuses.at(-1), 'live');
+  const speech = new Int16Array(1600).fill(1000).buffer;
+  rt.push(speech, 0);
+  assert.equal(FakeWS.instances[0].sent.at(-1), speech, 'real audio sent again');
+  rt.stop();
+  mock.timers.reset();
+});
+
 test('buildRealtimeConfig maps settings', () => {
   const cfg = buildRealtimeConfig({ languageHints: ['zh'], contextTerms: ['Soniox'], translationTarget: 'en', maxEndpointDelayMs: 700 }, { diarization: true });
   assert.equal(cfg.audio_format, 'pcm_s16le');
