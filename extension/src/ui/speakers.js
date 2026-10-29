@@ -21,12 +21,19 @@ async function knownNames(meetingId) {
   return [...names].sort((a, b) => a.localeCompare(b));
 }
 
-// 在事务里基于最新的 meeting.speakers 修改，避免和别的页面同时改时互相覆盖
+// 在事务里基于最新的 meeting.speakers 修改，避免和别的页面同时改时互相覆盖。
+// 改名会造成合并（库里已有同名的人）但用户没确认过时，不写入，返回 { needsConfirm: 目标条目, view }。
+// 弹窗里的 view 可能是旧的（别的页面刚改过名），所以必须在这里按最新数据再判断一次。
 async function applyChange(meetingId, change, log) {
   const segs = await getSegments(meetingId);
   let merged = null;
+  let needsConfirm = null;
+  let latestView = null;
   const meeting = await updateMeeting(meetingId, (m) => {
     const view = buildSpeakerView(m.speakers, segs);
+    latestView = view;
+    if (!change.into && !change.confirmed) needsConfirm = sameNameEntry(view, change.key, change.name);
+    if (needsConfirm) return;
     if (change.into) {
       m.speakers = mergeSpeaker(m.speakers, change.key, change.into);
       merged = change.into;
@@ -36,10 +43,14 @@ async function applyChange(meetingId, change, log) {
       merged = res.merged;
     }
   });
+  if (needsConfirm) {
+    log.info('speaker merge needs confirmation', { meetingId, key: change.key, into: needsConfirm.key });
+    return { needsConfirm, view: latestView };
+  }
   // 名字是用户数据，日志只记键
   log.info('speaker changed', { meetingId, key: change.key, named: !!change.name?.trim(), merged });
   broadcast({ type: EVT.SPEAKERS, meetingId });
-  return meeting;
+  return { meeting };
 }
 
 // key：被点击的说话人键；view：当前说话人视图。onChanged(meeting) 在保存后调用。
@@ -55,7 +66,8 @@ export async function openSpeakerDialog({ meetingId, key, view, log, onChanged }
 
   const run = async (change) => {
     try {
-      const meeting = await applyChange(meetingId, change, log);
+      const { meeting, needsConfirm, view: latest } = await applyChange(meetingId, change, log);
+      if (needsConfirm) { askMerge(needsConfirm, change, latest); return; }
       dlg.close();
       onChanged?.(meeting);
     } catch (e) {
@@ -66,18 +78,20 @@ export async function openSpeakerDialog({ meetingId, key, view, log, onChanged }
 
   // 合并确认：显示在弹窗里，确认前不保存
   const confirmBox = el('div', { class: 'spk-confirm hidden' });
-  const askMerge = (target, change) => {
+  const askMerge = (target, change, targetView = view) => {
     confirmBox.replaceChildren(
-      el('div', { text: t('spk.mergeConfirm', { from: label, into: entryLabel(target, view) }) }),
+      el('div', { text: t('spk.mergeConfirm', { from: label, into: entryLabel(target, targetView) }) }),
       el('div', { class: 'spk-actions' },
         el('span', { class: 'spacer' }),
         el('button', { type: 'button', text: t('spk.cancel'), onclick: () => { confirmBox.classList.add('hidden'); input.focus(); } }),
-        el('button', { type: 'button', class: 'danger', text: t('spk.mergeOk'), onclick: () => run(change) })));
+        el('button', { type: 'button', class: 'danger', text: t('spk.mergeOk'), onclick: () => run({ ...change, confirmed: true }) })));
+    // 不把焦点移到"确认合并"：按回车提交时，同一下回车会直接点中它，等于没确认。
+    // 焦点留在输入框，再按回车只会重新显示这个确认，合并必须点按钮。
     confirmBox.classList.remove('hidden');
-    confirmBox.querySelector('button.danger').focus();
   };
   const submit = () => {
     const target = sameNameEntry(view, key, input.value);
+    // 没发现同名也交给 applyChange：它会按库里最新的数据再查一次，需要时回来要确认
     if (target) askMerge(target, { key, name: input.value });
     else run({ key, name: input.value });
   };
