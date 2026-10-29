@@ -43,7 +43,7 @@ The first line is a header with the extension version, user agent, redacted sett
 ## Common issues
 
 **The other side is silent in the recording (`them` `avgRms: 0`).**
-Either nobody else spoke, the meeting tab itself was muted, or the wrong tab was captured. Check the warning `no audio from meeting tab for 60s`.
+Either nobody else spoke, the meeting tab itself was muted, or the wrong tab was captured. Check the info line `no audio from meeting tab for 60s`.
 
 **Everything I say appears twice: as "me", and again as "them".**
 Your speakers are feeding the microphone. Wear headphones.

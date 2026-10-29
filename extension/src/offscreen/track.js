@@ -133,7 +133,8 @@ export class TrackPipeline {
       this.silenceWarned = false;
     } else if (!this.silenceWarned && now - this.silentSince > SILENCE_WARN_MS) {
       this.silenceWarned = true;
-      this.log.warn(this.source === 'them'
+      // 开会时安静一会儿很正常，用 info：照常进导出日志，但不进扩展错误页（它收集 console.warn）
+      this.log.info(this.source === 'them'
         ? 'no audio from meeting tab for 60s (meeting muted / wrong tab / nobody talking?)'
         : 'no audio from microphone for 60s (muted / wrong device?)');
     }
