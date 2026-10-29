@@ -4,6 +4,12 @@
   "version": "0.1.0",
   "description": "Google Meet / Microsoft Teams 实时转录（Soniox），本地保存录音与字幕。",
   "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "permissions": [
     "tabCapture",
     "offscreen",
@@ -29,6 +35,12 @@
   },
   "action": {
     "default_title": "MeetScribe",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
     "default_popup": "src/popup/popup.html"
   },
   "side_panel": {
