@@ -33,6 +33,7 @@ The first line is a header with the extension version, user agent, redacted sett
 | Key or billing problems | `soniox error message` with `code` 401/402/403, `api key test failed` |
 | Missing audio in the recording | `MediaRecorder error`, `save audio chunk failed`, `recorder stop timed out` |
 | Volume / silence | `audio level (30s)` (`avgRms` 0 means silence), `track muted` |
+| Playback and captions out of sync | `recorder started` (`startDelayMs` = how late the recording really began), `recording offset corrected` |
 | Microphone missing | `microphone unavailable` |
 | Muted in the meeting but still transcribed, or never transcribed | `meeting mic state` (see `muted`, `signal`), `mic mute state`, `soniox paused`, `soniox resumed`, `soniox closing session while muted` |
 | Language switch | `languages changed during meeting`, `soniox reconfigure` |

@@ -55,7 +55,7 @@ docs/                          architecture and troubleshooting
 - **Message types live in `src/lib/messages.js`.** Add new ones there, never as string literals elsewhere. Commands carry `target: 'sw'` or `target: 'offscreen'`. Every `onMessage` listener must return `false` for messages it does not handle, or it will swallow other listeners' responses.
 - **Pure logic goes in `src/lib/` with a unit test.** Anything that can run without Chrome APIs (token assembly, time math, formatting, reconnection/gap logic with a fake WebSocket) should be testable from Node.
 - **Recording must never depend on the network.** Any change to the transcription path must keep the MediaRecorder branch independent and unaffected.
-- **Timeline.** All segment and gap times are milliseconds from `meeting.startedAt` ("meeting ms"). Real-time token times are relative to the current WebSocket session and converted with the session's first sample index (`samplesToMeetingMs`). Async token times are relative to the recording file, whose zero is `tracks[source].startOffsetMs`.
+- **Timeline.** All segment and gap times are milliseconds from `meeting.startedAt` ("meeting ms"). Real-time token times are relative to the current WebSocket session and converted with the session's first sample index (`samplesToMeetingMs`). Async token times are relative to the recording file, whose zero is `tracks[source].startOffsetMs` (taken in `MediaRecorder.onstart`, not at `start()`).
 
 ## Logging (important)
 

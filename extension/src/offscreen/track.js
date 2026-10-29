@@ -77,7 +77,14 @@ export class TrackPipeline {
       this.log.debug('audio chunk', { seq: chunk.seq, size: chunk.size });
     };
     this.recorder.onerror = (ev) => this.log.error('MediaRecorder error', { error: ev.error });
-    this.recorder.onstart = () => this.log.info('recorder started', { mimeType, state: this.recorder.state });
+    // 录音文件的 0 秒是录音真正开始的时刻，不是调用 start() 的时刻：
+    // 麦克风（iPhone 连续互通、蓝牙耳机）可能要好几秒才出声，按调用时刻算会让回放比字幕早几秒。
+    this.recorder.onstart = () => {
+      const requestedAt = this.recordInfo.startOffsetMs;
+      this.recordInfo.startOffsetMs = this.meetingMs();
+      this.log.info('recorder started', { mimeType, state: this.recorder.state, startOffsetMs: this.recordInfo.startOffsetMs,
+        startDelayMs: this.recordInfo.startOffsetMs - requestedAt });
+    };
     this.recordInfo.startOffsetMs = this.meetingMs();
     this.recorder.start(RECORDER_TIMESLICE_MS);
   }

@@ -1,7 +1,8 @@
 // 历史页：会议列表、搜索、回放（字幕跟随）、补转 / 整场重转、说话人改名 / 合并、导出、删除。
 
 import { $, el, renderSegment, sourceName, relabelSegments } from '../ui/common.js';
-import { listMeetings, getMeeting, getSegments, updateMeeting, deleteMeeting } from '../lib/db.js';
+import { listMeetings, getMeeting, getSegments, getChunks, updateMeeting, deleteMeeting } from '../lib/db.js';
+import { correctedStartOffset } from '../lib/timeline.js';
 import { formatClock, formatDateTime, formatBytes } from '../lib/format.js';
 import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
 import { exportMeeting, exportLogs, buildTrackBlob, runPendingExports } from '../lib/exporter.js';
@@ -283,11 +284,27 @@ async function renderDetail() {
   });
   await player.ready();
   if (selectedId !== meeting.id) return;
+  await fixRecordingOffsets(meeting, player.items);
   playBtn.disabled = false;
   range.disabled = false;
   time.textContent = `00:00 / ${formatClock(meetingDuration(meeting) || 0)}`;
   playBtn.onclick = async () => { if (player.playing) player.pause(); else await player.play(); updatePlayBtn(); };
   range.oninput = () => player.seek(Number(range.value));
+}
+
+// 旧录音的起点可能记早了（见 lib/timeline.js），拿到真实时长后校正并写回，补转 / 重转也会用到。
+async function fixRecordingOffsets(meeting, items) {
+  for (const it of items) {
+    const durationMs = it.audio.duration * 1000;
+    const chunks = await getChunks(meeting.id, it.source).catch(() => []);
+    const fixed = correctedStartOffset({ startOffsetMs: it.offsetMs, lastChunkAtMs: chunks.at(-1)?.at, durationMs });
+    if (fixed == null) continue;
+    log.info('recording offset corrected', { meetingId: meeting.id, source: it.source, from: it.offsetMs, to: fixed, durationMs: Math.round(durationMs) });
+    it.offsetMs = fixed;
+    await updateMeeting(meeting.id, (m) => {
+      if (m.tracks?.[it.source]) m.tracks[it.source].startOffsetMs = fixed;
+    }).catch((e) => log.warn('save corrected offset failed', { meetingId: meeting.id, source: it.source, error: e }));
+  }
 }
 
 async function runForSources(meeting, sources, mode, languageHints) {

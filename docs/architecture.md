@@ -68,6 +68,7 @@ connecting ──open──► live ──close──► reconnecting ──(bac
 - **Gaps.** The client tracks `sentUpTo`, the last sample handed to Soniox. When a new session starts after `sentUpTo`, or `stop()` happens with unsent audio, it calls `onGap(fromSample, toSample)`. Audio arriving after `stop()` is ignored, so it is not reported as a gap.
 - **Mute.** Soniox bills real-time by stream duration, not by audio sent, so keepalive alone saves nothing. While muted, the client sends zeros in place of the mic audio for a 10 s grace period, which keeps the timeline continuous across short mutes. After that it ends the stream. Unmuting opens a new session, with audio buffered meanwhile. Muted audio is never reported as a gap. The recorder branch is unaffected, so the recording still contains it.
 - **Timeline.** `onSessionStart(firstSample)` lets the track convert session-relative token times to meeting time: `pcmStartOffsetMs + firstSample / 16`.
+- **Recording zero.** `tracks[source].startOffsetMs` is taken in `MediaRecorder.onstart`, not when `start()` is called. Some microphones (iPhone Continuity, Bluetooth) take seconds to deliver audio, and the file starts at the first audio, so the call time made playback run ahead of the captions (measured: 2.7 s). The PCM branch counts silence from the start, so caption times were right. Recordings made before this fix are corrected in History once the real file duration is known: `lastChunk.at − duration` (`correctedStartOffset()` in `timeline.js`), written back to the meeting.
 
 ## Transcript assembly (`transcript.js`)
 
