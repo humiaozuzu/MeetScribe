@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>MeetScribe 设置</title>
+  <link rel="stylesheet" href="../ui/base.css">
+  <style>
+    body { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 15px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+    .field { display: grid; gap: 4px; margin-bottom: 14px; }
+    .field label { font-weight: 600; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .row input[type=text], .row input[type=password], .row select { flex: 1; min-width: 200px; }
+    .check { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
+    .check input { margin-top: 4px; }
+    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); }
+  </style>
+</head>
+<body>
+  <h1>MeetScribe 设置</h1>
+  <div class="faint">所有数据（key、录音、字幕、日志）只保存在本机这个扩展里。</div>
+
+  <h2>Soniox</h2>
+  <div class="field">
+    <label for="key">API key</label>
+    <div class="row">
+      <input id="key" type="password" autocomplete="off" placeholder="在 console.soniox.com 获取">
+      <button id="toggleKey">显示</button>
+      <button id="testKey">测试</button>
+    </div>
+    <div id="keyResult" class="faint">不填也能用：只录音，会后可在历史页补转。</div>
+  </div>
+  <div class="field">
+    <label for="langs">会议语言</label>
+    <input id="langs" type="text" placeholder="zh, ja, en">
+    <div class="faint">语言代码，逗号分隔。开始前可在弹窗里选，会议中可在侧边栏改；最后一次的选择会作为下一场的默认。</div>
+  </div>
+  <div class="field">
+    <label for="terms">专有名词 / 词表</label>
+    <textarea id="terms" rows="4" placeholder="每行一个：产品名、人名、术语"></textarea>
+  </div>
+  <label class="check"><input id="diar" type="checkbox"><span>区分对方的不同说话人（对方 1 / 对方 2…）</span></label>
+  <div class="field">
+    <label for="tr">实时翻译</label>
+    <select id="tr">
+      <option value="">不翻译</option>
+      <option value="zh">翻译成中文</option>
+      <option value="en">翻译成英文</option>
+      <option value="ja">翻译成日文</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="endpoint">断句等待（毫秒）</label>
+    <input id="endpoint" type="number" min="500" max="3000" step="100">
+    <div class="faint">停顿多久算一句话结束。越小字幕定稿越快，太小容易把一句话切碎。默认 500。</div>
+  </div>
+
+  <h2>麦克风（我的声音）</h2>
+  <label class="check"><input id="recMic" type="checkbox"><span>同时录制并转写我的麦克风</span></label>
+  <div class="field">
+    <div class="row">
+      <span id="micState" class="chip"></span>
+      <button id="grantMic">授权麦克风</button>
+    </div>
+    <div class="faint">扩展的后台录音页面无法弹出授权框，需要先在这里授权一次。建议戴耳机，否则对方的声音会被麦克风再录一遍。</div>
+  </div>
+  <div class="field">
+    <label for="micDevice">麦克风设备</label>
+    <select id="micDevice"><option value="">系统默认</option></select>
+  </div>
+
+  <h2>自动停止</h2>
+  <label class="check"><input id="autoStop" type="checkbox"><span>检测到离开 Meet / Teams 通话后自动停止录制</span></label>
+  <div class="field">
+    <label for="autoStopDelay">倒计时（秒）</label>
+    <input id="autoStopDelay" type="number" min="3" max="120" step="1">
+    <div class="faint">倒计时期间可在侧边栏点「继续录制」取消。依赖会议页面上的挂断按钮判断，Meet / Teams 改版后可能失效，届时需手动停止。</div>
+  </div>
+
+  <h2>存储与导出</h2>
+  <label class="check"><input id="autoExport" type="checkbox"><span>会议结束后自动把录音和字幕存到「下载/meetscribe/」（卸载扩展会清空扩展内数据，建议开启）</span></label>
+  <div class="row"><button id="openHistory">打开历史记录</button><span id="storage" class="faint"></span></div>
+
+  <h2>日志（排查问题用）</h2>
+  <div class="field">
+    <label for="logLevel">日志级别</label>
+    <select id="logLevel">
+      <option value="info">info（默认）</option>
+      <option value="debug">debug（更详细，排查问题时开启）</option>
+      <option value="warn">warn</option>
+    </select>
+    <div class="faint">日志保留 14 天，最多 5 万条，不含 API key。出问题时导出日志并描述现象即可。</div>
+  </div>
+  <div class="row">
+    <button id="logs24h">导出最近 24 小时日志</button>
+    <button id="logsAll">导出全部日志</button>
+    <button id="logsClear">清空日志</button>
+  </div>
+
+  <div id="toast" class="notice info hidden"></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

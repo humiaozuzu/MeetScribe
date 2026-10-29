@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "MeetScribe",
+  "version": "0.1.0",
+  "description": "Google Meet / Microsoft Teams 实时转录（Soniox），本地保存录音与字幕。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "sidePanel",
+    "storage",
+    "unlimitedStorage",
+    "downloads",
+    "activeTab",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.soniox.com/*",
+    "wss://stt-rt.soniox.com/*",
+    "https://meet.google.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
+    "https://teams.cloud.microsoft/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "MeetScribe",
+    "default_popup": "src/popup/popup.html"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/sidepanel.html"
+  },
+  "options_page": "src/options/options.html",
+  "commands": {
+    "toggle-recording": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "开始 / 停止当前标签页的录音转写"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.live.com/*",
+        "https://teams.cloud.microsoft/*"
+      ],
+      "js": [
+        "src/content/meeting-watch.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

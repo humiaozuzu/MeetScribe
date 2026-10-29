@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>MeetScribe</title>
+  <link rel="stylesheet" href="../ui/base.css">
+  <style>
+    body { width: 320px; padding: 14px; }
+    h1 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+    .tab { padding: 8px 10px; background: var(--bg-soft); border-radius: var(--radius); margin-bottom: 10px; }
+    .tab .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stack > * + * { margin-top: 8px; }
+    .row { display: flex; gap: 8px; }
+    .row > button { flex: 1; }
+    .big { width: 100%; padding: 10px; font-size: 15px; }
+    .timer { font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 600; }
+    footer { margin-top: 12px; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <h1>MeetScribe <span id="badge"></span></h1>
+
+  <section id="idle" class="stack hidden">
+    <div class="tab"><div class="title" id="tabTitle"></div><div class="faint" id="tabUrl"></div></div>
+    <div id="warnings" class="stack"></div>
+    <div><div class="faint">会议语言</div><div id="langs"></div></div>
+    <button id="start" class="primary big">开始录音转写</button>
+    <div class="faint">快捷键：⌘/Ctrl + Shift + Y</div>
+  </section>
+
+  <section id="recording" class="stack hidden">
+    <div class="tab"><div class="title" id="recTitle"></div><div class="timer" id="timer">00:00</div></div>
+    <div id="recWarnings" class="stack"></div>
+    <div class="row">
+      <button id="openPanel">打开字幕</button>
+      <button id="stop" class="danger">停止</button>
+    </div>
+  </section>
+
+  <div id="error" class="notice err hidden"></div>
+
+  <footer>
+    <button class="link" id="history">历史记录</button>
+    <button class="link" id="options">设置</button>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f7f9;
+  --bg-hover: #eef0f3;
+  --border: #e3e5e8;
+  --text: #1f2328;
+  --text-soft: #5f6670;
+  --text-faint: #8b929b;
+  --accent: #2563eb;
+  --accent-soft: #e8efff;
+  --me: #0f766e;
+  --me-soft: #e6f4f2;
+  --them: #4338ca;
+  --them-soft: #eef0ff;
+  --danger: #d93025;
+  --danger-soft: #fdecea;
+  --warn: #b45309;
+  --warn-soft: #fef3e2;
+  --ok: #15803d;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191c;
+    --bg-soft: #1f2226;
+    --bg-hover: #2a2e33;
+    --border: #33373d;
+    --text: #e8eaed;
+    --text-soft: #a9b0b8;
+    --text-faint: #7d848c;
+    --accent: #7aa2ff;
+    --accent-soft: #1f2a44;
+    --me: #5eead4;
+    --me-soft: #12302c;
+    --them: #a5b4fc;
+    --them-soft: #23264a;
+    --danger: #f28b82;
+    --danger-soft: #3b1f1d;
+    --warn: #fbbf24;
+    --warn-soft: #3a2e12;
+    --ok: #4ade80;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
+button {
+  font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--bg-soft);
+  color: var(--text); border-radius: var(--radius); padding: 6px 12px;
+}
+button:hover:not(:disabled) { background: var(--bg-hover); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+button.danger:hover:not(:disabled) { filter: brightness(1.08); background: var(--danger); }
+button.link { border: none; background: none; color: var(--accent); padding: 2px 4px; }
+input, select, textarea {
+  font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 8px;
+}
+textarea { resize: vertical; }
+.muted { color: var(--text-soft); }
+.faint { color: var(--text-faint); font-size: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--bg-soft); color: var(--text-soft); }
+.chip.ok { background: var(--me-soft); color: var(--ok); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.err { background: var(--danger-soft); color: var(--danger); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.notice { padding: 8px 10px; border-radius: var(--radius); font-size: 13px; }
+.notice.warn { background: var(--warn-soft); color: var(--warn); }
+.notice.err { background: var(--danger-soft); color: var(--danger); }
+.notice.info { background: var(--accent-soft); color: var(--accent); }
+.hidden { display: none !important; }
+
+/* 字幕片段（侧边栏与历史页共用） */
+.seg { padding: 6px 10px; border-left: 3px solid transparent; border-radius: 4px; }
+.seg + .seg { margin-top: 2px; }
+.seg .meta { font-size: 12px; color: var(--text-faint); display: flex; gap: 8px; align-items: baseline; }
+.seg .who { font-weight: 600; }
+.seg.me { border-left-color: var(--me); }
+.seg.me .who { color: var(--me); }
+.seg.them { border-left-color: var(--them); }
+.seg.them .who { color: var(--them); }
+.seg .text { white-space: pre-wrap; word-break: break-word; }
+.seg .tr { color: var(--text-soft); font-size: 13px; margin-top: 2px; }
+.seg .pending { color: var(--text-faint); }
+.seg.async .meta::after { content: '补转'; font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.lang-picker { display: flex; flex-wrap: wrap; gap: 4px; }
+.lang-picker button { padding: 2px 10px; border-radius: 999px; font-size: 13px; color: var(--text-soft); }
+.lang-picker button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.level { width: 40px; height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; display: inline-block; }
+.level > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .2s; }

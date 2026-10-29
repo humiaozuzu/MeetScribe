@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>MeetScribe 字幕</title>
+  <link rel="stylesheet" href="../ui/base.css">
+  <style>
+    body { height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    header .top { display: flex; align-items: center; gap: 8px; }
+    header .title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .timer { font-variant-numeric: tabular-nums; color: var(--text-soft); }
+    .sources { display: flex; gap: 12px; margin-top: 6px; flex-wrap: wrap; font-size: 12px; }
+    .src { display: flex; align-items: center; gap: 6px; }
+    .src .name { font-weight: 600; }
+    .src.me .name { color: var(--me); }
+    .src.them .name { color: var(--them); }
+    .langs { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+    #notices:not(:empty) { padding: 8px 12px 0; display: grid; gap: 6px; }
+    main { flex: 1; overflow-y: auto; padding: 8px 4px 8px 8px; }
+    .live .seg { opacity: .85; }
+    .empty { text-align: center; color: var(--text-faint); padding: 40px 16px; }
+    footer { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+    footer .spacer { flex: 1; }
+    #jump { position: fixed; bottom: 56px; right: 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="top">
+      <span class="title" id="title">MeetScribe</span>
+      <span class="timer" id="timer"></span>
+    </div>
+    <div class="sources" id="sources"></div>
+    <div class="langs hidden" id="langRow"><span class="faint">语言</span><span id="langs"></span><span class="faint" id="langNote"></span></div>
+  </header>
+  <div id="notices"></div>
+  <main id="list"><div class="empty" id="empty">未在录制。点浏览器工具栏里的扩展图标开始。</div></main>
+  <div class="live" id="live"></div>
+  <button id="jump" class="hidden">↓ 最新</button>
+  <footer>
+    <button id="stop" class="danger hidden">停止</button>
+    <span class="spacer"></span>
+    <button class="link" id="history">历史</button>
+    <button class="link" id="options">设置</button>
+  </footer>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,378 @@
+// 历史页：会议列表、搜索、回放（字幕跟随）、补转 / 整场重转、导出、删除。
+
+import { $, el, renderSegment } from '../ui/common.js';
+import { listMeetings, getMeeting, getSegments, updateMeeting, deleteMeeting } from '../lib/db.js';
+import { formatClock, formatDateTime, formatBytes } from '../lib/format.js';
+import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
+import { exportMeeting, exportLogs, buildTrackBlob, runPendingExports } from '../lib/exporter.js';
+import { runRetranscribe, openGaps } from '../lib/retranscribe.js';
+import { getSettings, redactSettings } from '../lib/settings.js';
+import { EVT } from '../lib/messages.js';
+import { langPicker, langNames } from '../ui/langs.js';
+
+const log = createLogger('history');
+installGlobalErrorHandlers(log);
+
+const SOURCE_NAMES = { them: '对方', me: '我' };
+let meetings = [];
+let selectedId = null;
+let player = null;
+const textCache = new Map(); // meetingId -> 全文（搜索用）
+const runningJobs = new Map(); // `${meetingId}:${source}` -> progress text
+
+// ---------- 列表 ----------
+
+function meetingDuration(m) {
+  return m.endedAt ? m.endedAt - m.startedAt : null;
+}
+
+function meetingChips(m) {
+  const chips = [];
+  if (m.status === 'recording') chips.push(el('span', { class: 'chip err', text: '录制中' }));
+  if (m.status === 'interrupted') chips.push(el('span', { class: 'chip warn', text: '异常中断' }));
+  const gaps = openGaps(m).length;
+  if (gaps) chips.push(el('span', { class: 'chip warn', text: `${gaps} 处缺口` }));
+  if (m.retranscribed) chips.push(el('span', { class: 'chip ok', text: '已整场重转' }));
+  if (m.transcription && !m.transcription.enabled) chips.push(el('span', { class: 'chip', text: '仅录音' }));
+  return chips;
+}
+
+async function loadList() {
+  meetings = await listMeetings();
+  renderList();
+}
+
+async function ensureSearchText() {
+  for (const m of meetings) {
+    if (textCache.has(m.id)) continue;
+    const segs = await getSegments(m.id);
+    textCache.set(m.id, `${m.title}\n${segs.map((s) => s.text).join('\n')}`.toLowerCase());
+  }
+}
+
+async function renderList() {
+  const q = $('#q').value.trim().toLowerCase();
+  if (q) await ensureSearchText();
+  const box = $('#meetings');
+  box.replaceChildren();
+  const shown = meetings.filter((m) => !q || (textCache.get(m.id) || m.title.toLowerCase()).includes(q));
+  if (!shown.length) box.append(el('div', { class: 'empty', text: q ? '没有匹配的会议' : '还没有会议记录' }));
+  for (const m of shown) {
+    const d = meetingDuration(m);
+    box.append(el('div', { class: `m-item ${m.id === selectedId ? 'sel' : ''}`, onclick: () => select(m.id) },
+      el('div', { class: 't', text: m.title || '会议' }),
+      el('div', { class: 's' },
+        el('span', { class: 'faint', text: `${formatDateTime(m.startedAt)}${d ? ` · ${formatClock(d)}` : ''}` }),
+        ...meetingChips(m))));
+  }
+}
+
+$('#q').addEventListener('input', () => renderList());
+
+// ---------- 播放器：两路录音（对方 / 我）按会议时间轴同步播放 ----------
+
+class SyncedPlayer {
+  constructor(tracks, durationMs, onTime) {
+    this.items = tracks.map((t) => {
+      const url = URL.createObjectURL(t.blob);
+      const audio = new Audio(url);
+      audio.preload = 'auto';
+      return { ...t, url, audio };
+    });
+    this.durationMs = durationMs;
+    this.onTime = onTime;
+    this.playing = false;
+    this.items[0]?.audio.addEventListener('timeupdate', () => this.onTime(this.time()));
+    this.items[0]?.audio.addEventListener('ended', () => { this.pause(); });
+    this.syncTimer = setInterval(() => this._resync(), 1000);
+  }
+
+  // MediaRecorder 生成的 webm 没有时长信息，先跳到末尾让浏览器算出时长，seek 才可靠
+  async ready() {
+    await Promise.all(this.items.map(({ audio }) => new Promise((resolve) => {
+      const done = () => { audio.currentTime = 0; resolve(); };
+      audio.addEventListener('loadedmetadata', () => {
+        if (audio.duration !== Infinity && !Number.isNaN(audio.duration)) return done();
+        audio.addEventListener('durationchange', function h() {
+          if (audio.duration === Infinity) return;
+          audio.removeEventListener('durationchange', h);
+          done();
+        });
+        audio.currentTime = 1e101;
+      }, { once: true });
+      audio.addEventListener('error', () => { log.warn('audio load error', { error: audio.error?.message }); resolve(); }, { once: true });
+      setTimeout(resolve, 8000);
+    })));
+  }
+
+  time() {
+    const m = this.items[0];
+    return m ? m.audio.currentTime * 1000 + m.offsetMs : 0;
+  }
+
+  seek(ms) {
+    for (const it of this.items) it.audio.currentTime = Math.max(0, (ms - it.offsetMs) / 1000);
+    this.onTime(ms);
+  }
+
+  async play() {
+    this.playing = true;
+    const t = this.time();
+    this.seek(t);
+    await Promise.all(this.items.map((it) => it.audio.play().catch((e) => log.warn('play failed', { source: it.source, error: e }))));
+  }
+
+  pause() {
+    this.playing = false;
+    for (const it of this.items) it.audio.pause();
+  }
+
+  _resync() {
+    if (!this.playing || this.items.length < 2) return;
+    const t = this.time();
+    for (const it of this.items.slice(1)) {
+      const want = (t - it.offsetMs) / 1000;
+      if (want >= 0 && Math.abs(it.audio.currentTime - want) > 0.25) it.audio.currentTime = want;
+    }
+  }
+
+  destroy() {
+    this.pause();
+    clearInterval(this.syncTimer);
+    for (const it of this.items) { it.audio.src = ''; URL.revokeObjectURL(it.url); }
+  }
+}
+
+// ---------- 详情 ----------
+
+async function select(id) {
+  selectedId = id;
+  if (location.hash.slice(1) !== id) history.replaceState(null, '', `#${id}`);
+  renderList();
+  await renderDetail();
+}
+
+async function renderDetail() {
+  player?.destroy();
+  player = null;
+  const box = $('#detail');
+  const meeting = await getMeeting(selectedId);
+  if (!meeting) { box.replaceChildren(el('div', { class: 'empty', text: '会议不存在' })); return; }
+  const segs = await getSegments(meeting.id);
+  const live = meeting.status === 'recording';
+
+  const title = el('input', { class: 'title', value: meeting.title || '' });
+  title.addEventListener('change', async () => {
+    await updateMeeting(meeting.id, (m) => { m.title = title.value.trim() || m.title; });
+    await loadList();
+  });
+
+  const tracks = meeting.tracks || {};
+  const trackInfo = Object.entries(tracks).map(([k, t]) => `${SOURCE_NAMES[k]} ${formatBytes(t.bytes)}`).join(' · ');
+  const meta = el('div', { class: 'faint', text: [
+    formatDateTime(meeting.startedAt),
+    meetingDuration(meeting) ? `时长 ${formatClock(meetingDuration(meeting))}` : null,
+    trackInfo || null,
+    meeting.transcription?.enabled ? `实时模型 ${meeting.transcription.model}` : '未实时转写',
+  ].filter(Boolean).join(' · ') });
+
+  const tr = meeting.transcription || {};
+  const changes = tr.languageChanges || [];
+  const initialLangs = changes.length ? changes[0].from : tr.languageHints;
+  const langInfo = el('div', { class: 'faint', text: `会议语言：${langNames(initialLangs)}${
+    changes.map((c) => `，${formatClock(c.atMs)} 改为 ${langNames(c.languageHints)}`).join('')}` });
+  let retransLangs = tr.languageHints || (await getSettings()).languageHints;
+  const retransPicker = el('div', { class: 'row-inline' }, el('span', { class: 'faint', text: '重转语言' }),
+    langPicker(retransLangs, (next) => { retransLangs = next; }, { disabled: live }));
+
+  const notices = el('div', { class: 'gaps' });
+  if (live) notices.append(el('div', { class: 'notice info', text: '这场会议正在录制，实时字幕请看侧边栏；结束后可在这里补转、导出。' }));
+  if (meeting.status === 'interrupted') notices.append(el('div', { class: 'notice warn', text: '录制异常中断（浏览器关闭或扩展崩溃），已保存的录音仍可回放和补转。' }));
+  if (meeting.micError) notices.append(el('div', { class: 'notice warn', text: `当时麦克风不可用：${meeting.micError}` }));
+  const gaps = openGaps(meeting);
+  if (gaps.length) {
+    notices.append(el('div', { class: 'notice warn', text: `转写缺口：${gaps.map((g) => `${SOURCE_NAMES[g.source]} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join('，')}` }));
+  }
+  for (const j of meeting.jobs || []) {
+    const key = `${meeting.id}:${j.source}`;
+    if (runningJobs.has(key)) notices.append(el('div', { class: 'notice info', text: `${SOURCE_NAMES[j.source]}：${runningJobs.get(key)}` }));
+    else if (j.status === 'running') notices.append(el('div', { class: 'notice warn' }, `${SOURCE_NAMES[j.source]}：上次的补转任务未完成。`,
+      el('button', { class: 'link', text: '继续', onclick: () => startJob(meeting.id, j.source, j.mode) })));
+    else if (j.status === 'error') notices.append(el('div', { class: 'notice err', text: `${SOURCE_NAMES[j.source]} 补转失败：${j.error}` }));
+  }
+
+  const busy = [...runningJobs.keys()].some((k) => k.startsWith(meeting.id));
+  const hasTrack = (s) => !!tracks[s]?.chunks;
+  const actions = el('div', { class: 'actions' },
+    gaps.length ? el('button', { class: 'primary', disabled: live || busy, text: '补转缺口', title: '用录音补齐转写中断的部分',
+      onclick: () => runForSources(meeting, [...new Set(gaps.map((g) => g.source))], 'gaps', retransLangs) }) : null,
+    el('button', { disabled: live || busy, text: '整场重转', title: '用 Soniox 异步接口重新转写整场录音（替换当前字幕，通常更准）',
+      onclick: () => {
+        if (!confirm('用整场录音重新转写，会替换当前字幕。继续？')) return;
+        runForSources(meeting, ['them', 'me'].filter(hasTrack), 'full', retransLangs);
+      } }),
+    el('button', { disabled: live, text: '导出 Markdown', onclick: () => doExport(meeting.id, { audio: false }) }),
+    el('button', { disabled: live, text: '导出录音', onclick: () => doExport(meeting.id, { markdown: false }) }),
+    el('button', { text: '导出本场日志', onclick: () => exportMeetingLogs(meeting) }),
+    el('button', { class: 'danger', disabled: live || busy, text: '删除', onclick: () => removeMeeting(meeting) }),
+  );
+
+  // 播放器
+  const playBtn = el('button', { text: '▶ 播放', disabled: true });
+  const range = el('input', { type: 'range', min: 0, max: Math.max(1, meetingDuration(meeting) || 1), value: 0, step: 100, disabled: true });
+  const time = el('span', { class: 'time', text: '加载录音…' });
+  const playerRow = el('div', { class: 'player' }, playBtn, range, time);
+
+  const segBox = el('div', { id: 'segs' });
+  if (!segs.length) segBox.append(el('div', { class: 'empty', text: meeting.transcription?.enabled ? '没有转写内容' : '这场会议只录了音，可以点「整场重转」生成字幕。' }));
+  for (const s of segs) segBox.append(renderSegment(s, { onSeek: (ms) => { player?.seek(ms); if (!player?.playing) player?.play().then(updatePlayBtn); } }));
+
+  box.replaceChildren(el('div', { class: 'd-head' }, title, meta, langInfo, notices, retransPicker, actions, playerRow), segBox);
+
+  function updatePlayBtn() { playBtn.textContent = player?.playing ? '❚❚ 暂停' : '▶ 播放'; }
+
+  if (live) { time.textContent = '录制中'; return; }
+  const trackList = [];
+  for (const source of ['them', 'me']) {
+    const blob = await buildTrackBlob(meeting.id, source);
+    if (blob) trackList.push({ source, blob, offsetMs: tracks[source]?.startOffsetMs ?? 0 });
+  }
+  if (selectedId !== meeting.id) return; // 加载过程中切换了会议
+  if (!trackList.length) { time.textContent = '没有录音'; return; }
+  let lastActive = null;
+  player = new SyncedPlayer(trackList, meetingDuration(meeting), (ms) => {
+    range.value = ms;
+    time.textContent = `${formatClock(ms)} / ${formatClock(meetingDuration(meeting) || 0)}`;
+    // 高亮当前片段
+    const nodes = segBox.querySelectorAll('.seg');
+    let cur = null;
+    for (const n of nodes) { if (Number(n.dataset.start) <= ms) cur = n; else break; }
+    if (cur !== lastActive) {
+      lastActive?.classList.remove('playing');
+      cur?.classList.add('playing');
+      if (cur && player?.playing) cur.scrollIntoView({ block: 'nearest' });
+      lastActive = cur;
+    }
+  });
+  await player.ready();
+  if (selectedId !== meeting.id) return;
+  playBtn.disabled = false;
+  range.disabled = false;
+  time.textContent = `00:00 / ${formatClock(meetingDuration(meeting) || 0)}`;
+  playBtn.onclick = async () => { if (player.playing) player.pause(); else await player.play(); updatePlayBtn(); };
+  range.oninput = () => player.seek(Number(range.value));
+}
+
+async function runForSources(meeting, sources, mode, languageHints) {
+  const settings = { ...(await getSettings()), ...(languageHints ? { languageHints } : {}) };
+  if (!settings.sonioxApiKey) { alert('请先在设置里填写 Soniox API key'); return; }
+  await Promise.all(sources.map((s) => startJob(meeting.id, s, mode, settings)));
+}
+
+async function startJob(meetingId, source, mode, settings) {
+  settings = settings || await getSettings();
+  const key = `${meetingId}:${source}`;
+  if (runningJobs.has(key)) return;
+  runningJobs.set(key, '准备中…');
+  const rerender = () => { if (selectedId === meetingId) renderDetail(); };
+  rerender();
+  log.info('retranscribe requested', { meetingId, source, mode, settings: redactSettings(settings) });
+  try {
+    const res = await runRetranscribe({
+      meetingId, source, mode, settings, log,
+      onProgress: (text) => {
+        runningJobs.set(key, text);
+        const node = [...document.querySelectorAll('.notice.info')].find((n) => n.textContent.startsWith(`${SOURCE_NAMES[source]}：`));
+        if (node) node.textContent = `${SOURCE_NAMES[source]}：${text}`;
+      },
+    });
+    log.info('retranscribe finished', { meetingId, source, mode, ...res });
+  } catch (e) {
+    log.error('retranscribe failed', { meetingId, source, mode, error: e });
+    alert(`${SOURCE_NAMES[source]} 补转失败：${e.message}`);
+  } finally {
+    runningJobs.delete(key);
+    textCache.delete(meetingId);
+    await loadList();
+    rerender();
+  }
+}
+
+async function doExport(meetingId, opts) {
+  try {
+    const res = await exportMeeting(meetingId, { ...opts, log });
+    alert(`已导出到 下载/${res.folder}/`);
+  } catch (e) {
+    log.error('export failed', { meetingId, error: e });
+    alert(`导出失败：${e.message}`);
+  }
+}
+
+async function exportMeetingLogs(meeting) {
+  const from = meeting.startedAt - 2 * 60_000;
+  const to = (meeting.endedAt || Date.now()) + 5 * 60_000;
+  try {
+    const settings = await getSettings();
+    await exportLogs({
+      label: `meeting-${meeting.id.slice(0, 8)}`,
+      filter: (e) => e.meetingId === meeting.id || (e.ts >= from && e.ts <= to),
+      meta: { meeting, settings: redactSettings(settings) },
+    });
+  } catch (e) {
+    log.error('export meeting logs failed', e);
+    alert(`导出日志失败：${e.message}`);
+  }
+}
+
+async function removeMeeting(meeting) {
+  if (!confirm(`删除「${meeting.title}」的录音和字幕？此操作不可恢复。`)) return;
+  await deleteMeeting(meeting.id);
+  log.info('meeting deleted', { meetingId: meeting.id });
+  selectedId = null;
+  player?.destroy();
+  player = null;
+  $('#detail').replaceChildren(el('div', { class: 'empty', text: '已删除' }));
+  await loadList();
+  showStorage();
+}
+
+// ---------- 顶部工具栏 ----------
+
+$('#exportAll').addEventListener('click', async () => {
+  if (!confirm(`导出全部 ${meetings.length} 场会议的录音和字幕到下载目录？`)) return;
+  for (const m of meetings) {
+    if (m.status === 'recording') continue;
+    try { await exportMeeting(m.id, { log }); } catch (e) { log.error('export failed', { meetingId: m.id, error: e }); }
+  }
+  alert('导出完成：下载/meetscribe/');
+});
+
+$('#exportLogs').addEventListener('click', async () => {
+  const settings = await getSettings();
+  await exportLogs({ label: 'all', meta: { settings: redactSettings(settings), meetings: meetings.length } })
+    .catch((e) => alert(`导出日志失败：${e.message}`));
+});
+
+$('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+
+async function showStorage() {
+  const est = await navigator.storage.estimate().catch(() => null);
+  if (est) $('#storage').textContent = `本地占用 ${formatBytes(est.usage)}`;
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === EVT.MEETING_ENDED || msg?.type === EVT.MEETING_STATE) {
+    loadList().then(() => { if (selectedId) renderDetail(); });
+  }
+  return false;
+});
+
+window.addEventListener('hashchange', () => { const id = location.hash.slice(1); if (id && id !== selectedId) select(id); });
+
+(async () => {
+  await loadList();
+  showStorage();
+  const id = location.hash.slice(1) || meetings[0]?.id;
+  if (id) await select(id);
+  runPendingExports(log).catch((e) => log.error('pending export failed', e));
+})().catch((e) => log.error('history init failed', e));

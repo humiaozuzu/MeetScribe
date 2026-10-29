@@ -1,0 +1,9 @@
+{
+  "name": "meetscribe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/",
+    "check": "for f in $(find extension/src -name '*.js'); do node --check \"$f\" || exit 1; done"
+  }
+}

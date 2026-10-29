@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>MeetScribe 历史记录</title>
+  <link rel="stylesheet" href="../ui/base.css">
+  <style>
+    body { height: 100vh; display: grid; grid-template-columns: 300px 1fr; grid-template-rows: auto 1fr; }
+    .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    .topbar h1 { font-size: 16px; margin: 0; flex: 1; }
+    aside { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+    aside .search { padding: 10px; }
+    aside .search input { width: 100%; }
+    #meetings { overflow-y: auto; flex: 1; }
+    .m-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--border); }
+    .m-item:hover { background: var(--bg-hover); }
+    .m-item.sel { background: var(--accent-soft); }
+    .m-item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .m-item .s { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+    section#detail { display: flex; flex-direction: column; min-height: 0; }
+    .d-head { padding: 14px 18px 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
+    .d-head input.title { font-size: 18px; font-weight: 600; border-color: transparent; padding: 2px 4px; width: 100%; }
+    .d-head input.title:hover, .d-head input.title:focus { border-color: var(--border); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .player { display: flex; align-items: center; gap: 10px; }
+    .player input[type=range] { flex: 1; }
+    .player .time { font-variant-numeric: tabular-nums; color: var(--text-soft); min-width: 110px; text-align: right; }
+    #segs { flex: 1; overflow-y: auto; padding: 10px 14px; }
+    .seg.playing { background: var(--accent-soft); }
+    .empty { color: var(--text-faint); padding: 40px; text-align: center; }
+    .gaps { display: grid; gap: 6px; }
+    .row-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    @media (max-width: 760px) { body { grid-template-columns: 1fr; } aside { max-height: 35vh; } }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>历史记录</h1>
+    <span class="faint" id="storage"></span>
+    <button id="exportAll">导出全部</button>
+    <button id="exportLogs">导出日志</button>
+    <button class="link" id="options">设置</button>
+  </div>
+  <aside>
+    <div class="search"><input id="q" type="search" placeholder="搜索标题或内容"></div>
+    <div id="meetings"></div>
+  </aside>
+  <section id="detail"><div class="empty">选择左侧的一场会议</div></section>
+  <script type="module" src="history.js"></script>
+</body>
+</html>
