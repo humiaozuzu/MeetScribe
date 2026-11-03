@@ -25,6 +25,7 @@
   "host_permissions": [
     "https://api.soniox.com/*",
     "wss://stt-rt.soniox.com/*",
+    "https://api.openai.com/*",
     "https://meet.google.com/*",
     "https://teams.microsoft.com/*",
     "https://teams.live.com/*",

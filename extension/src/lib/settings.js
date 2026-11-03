@@ -1,5 +1,7 @@
 // 设置存 chrome.storage.local（只有本扩展可读，未加密）。
 
+import { DEFAULT_OPENAI_MODEL } from './openai.js';
+
 export const DEFAULT_SETTINGS = {
   sonioxApiKey: '',
   languageHints: ['zh', 'ja', 'en'], // 整场会议共用；弹窗 / 侧边栏里改动会写回这里，作为下一场的默认
@@ -15,6 +17,11 @@ export const DEFAULT_SETTINGS = {
   autoExport: false,             // 会议结束后自动导出到 下载/meetscribe/
   logLevel: 'info',              // 'debug' | 'info' | 'warn' | 'error'
   uiLanguage: '',                // 界面语言：'' = 跟随浏览器（不支持时用中文）；'zh' | 'ja' | 'en'
+  floatingCaptions: false,       // 在会议页面上显示悬浮字幕；会议中可在侧边栏开关
+  openaiApiKey: '',              // AI 纪要（OpenAI）。不填就没有纪要，其它功能不受影响
+  openaiModel: DEFAULT_OPENAI_MODEL,
+  notesLanguage: '',             // 纪要语言：'' = 跟随界面语言；'zh' | 'ja' | 'en'
+  liveNotes: true,               // 会议中定时更新纪要；关掉则只在会后整理一次
   settingsVersion: 2,
 };
 
@@ -47,7 +54,7 @@ export async function saveSettings(patch) {
 
 // 用于日志：去掉敏感字段。
 export function redactSettings(s) {
-  return { ...s, sonioxApiKey: maskKey(s.sonioxApiKey) };
+  return { ...s, sonioxApiKey: maskKey(s.sonioxApiKey), openaiApiKey: maskKey(s.openaiApiKey) };
 }
 
 export function maskKey(key) {

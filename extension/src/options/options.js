@@ -1,6 +1,7 @@
 import { $, el, permissionState } from '../ui/common.js';
 import { getSettings, saveSettings, redactSettings } from '../lib/settings.js';
 import { validateKey } from '../lib/soniox-async.js';
+import { checkModel, DEFAULT_OPENAI_MODEL } from '../lib/openai.js';
 import { createLogger, installGlobalErrorHandlers } from '../lib/log.js';
 import { exportLogs } from '../lib/exporter.js';
 import { clearLogs } from '../lib/db.js';
@@ -37,6 +38,12 @@ async function load() {
   $('#autoStop').checked = s.autoStopOnLeave;
   $('#autoStopDelay').value = s.autoStopDelaySec;
   $('#logLevel').value = s.logLevel;
+  $('#captions').checked = s.floatingCaptions;
+  $('#openaiKey').value = s.openaiApiKey;
+  $('#openaiModel').value = s.openaiModel;
+  $('#openaiModel').placeholder = DEFAULT_OPENAI_MODEL;
+  $('#notesLang').value = s.notesLanguage;
+  $('#liveNotes').checked = s.liveNotes;
   await refreshMic(s.micDeviceId);
   const est = await navigator.storage.estimate().catch(() => null);
   if (est) $('#storage').textContent = t('common.storageUsage', { size: formatBytes(est.usage) });
@@ -74,6 +81,42 @@ $('#autoStopDelay').addEventListener('change', () => {
 });
 $('#autoExport').addEventListener('change', () => save({ autoExport: $('#autoExport').checked }));
 $('#logLevel').addEventListener('change', () => save({ logLevel: $('#logLevel').value }));
+$('#captions').addEventListener('change', () => save({ floatingCaptions: $('#captions').checked }));
+$('#openaiKey').addEventListener('change', () => save({ openaiApiKey: $('#openaiKey').value.trim() }));
+$('#openaiModel').addEventListener('change', () => {
+  const v = $('#openaiModel').value.trim() || DEFAULT_OPENAI_MODEL;
+  $('#openaiModel').value = v;
+  save({ openaiModel: v });
+});
+$('#notesLang').addEventListener('change', () => save({ notesLanguage: $('#notesLang').value }));
+$('#liveNotes').addEventListener('change', () => save({ liveNotes: $('#liveNotes').checked }));
+
+$('#toggleOpenaiKey').addEventListener('click', () => {
+  const k = $('#openaiKey');
+  k.type = k.type === 'password' ? 'text' : 'password';
+  $('#toggleOpenaiKey').textContent = t(k.type === 'password' ? 'opt.show' : 'opt.hide');
+});
+
+$('#testOpenai').addEventListener('click', async () => {
+  const key = $('#openaiKey').value.trim();
+  const model = $('#openaiModel').value.trim() || DEFAULT_OPENAI_MODEL;
+  const out = $('#openaiResult');
+  if (!key) { out.textContent = t('opt.keyEmpty'); return; }
+  await save({ openaiApiKey: key, openaiModel: model });
+  out.textContent = t('opt.keyTesting');
+  out.style.color = '';
+  try {
+    await checkModel({ apiKey: key, model });
+    out.textContent = t('opt.openaiKeyOk');
+    out.style.color = 'var(--ok)';
+    log.info('openai key test ok', { model });
+  } catch (e) {
+    const msg = e.status === 401 ? t('opt.keyInvalid') : e.status === 404 ? t('opt.openaiModelMissing') : e.message;
+    out.textContent = `✗ ${msg}`;
+    out.style.color = 'var(--danger)';
+    log.warn('openai key test failed', { status: e.status, code: e.code, message: e.message, model });
+  }
+});
 
 $('#toggleKey').addEventListener('click', () => {
   const k = $('#key');

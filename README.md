@@ -9,6 +9,8 @@ A Chrome extension that transcribes **Google Meet** and **Microsoft Teams** (web
 - **History page.** Search past meetings and play them back with the transcript highlighted as it plays. Click a timestamp to seek. You can fill gaps or re-transcribe a whole meeting, export Markdown and audio, or delete a meeting.
 - **Meeting languages.** Pick them before you start and change them mid-call, for example Chinese, Japanese and English together.
 - **Auto stop.** Recording stops a few seconds after you leave the call. The countdown can be cancelled.
+- **AI meeting notes (optional).** With your own OpenAI API key, the side panel keeps notes as the meeting goes: a summary, topics, decisions, action items, and names and terms. Every item links back to the line it came from. A final version is written when the meeting ends. Only the text transcript is sent to OpenAI, never the audio.
+- **Floating captions (optional).** A caption bar on the meeting page itself. It stays when the side panel is closed.
 - **Bring your own key.** There is no backend. Settings, recordings, transcripts and logs stay on your machine.
 - **Built-in diagnostics.** Structured logs can be exported per meeting.
 
@@ -68,6 +70,7 @@ Wear headphones. Otherwise your microphone picks up the other side's audio from 
 | Settings and Soniox key | `chrome.storage.local`, not encrypted, readable only by this extension |
 | Meetings, transcripts, audio (webm/opus, about 15 MB per hour per stream), logs | IndexedDB in the extension's origin |
 | Audio sent to Soniox | Live streams during the meeting. After-meeting jobs upload the recording and delete it from Soniox once the job finishes. |
+| Text sent to OpenAI (only with an OpenAI key) | The transcript lines, with speaker labels, for the AI notes. No audio. |
 
 - **Uninstalling the extension deletes all local data.** Turn on **会议结束后自动导出** (auto-export after each meeting), or export regularly. Files go to `Downloads/meetscribe/`.
 - Your Soniox key is used directly from the browser. That is fine for personal use. Do not ship this build to other people with your key in it.

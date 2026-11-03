@@ -13,6 +13,7 @@ import { langPicker, langNames } from '../ui/langs.js';
 import { initI18n, t } from '../ui/i18n.js';
 import { openSpeakerDialog, entryLabel } from '../ui/speakers.js';
 import { buildSpeakerView } from '../lib/speakers.js';
+import { createNotesPanel } from '../ui/notes.js';
 
 const log = createLogger('history');
 installGlobalErrorHandlers(log);
@@ -24,6 +25,7 @@ let player = null;
 const textCache = new Map(); // meetingId -> 全文（搜索用）
 const runningJobs = new Map(); // `${meetingId}:${source}` -> 进度 { step, fraction?, elapsedMs?, at }
 const speakerUpdaters = new Map(); // meetingId -> 重新读取说话人表并刷新（别的页面改名后）
+let notesPanel = null; // 当前详情页的纪要面板（接收 meeting:notes 广播）
 
 // ---------- 列表 ----------
 
@@ -260,7 +262,31 @@ async function renderDetail() {
   for (const s of segs) segBox.append(renderSegment(s, { view, onSpeaker, onSeek: (ms) => { player?.seek(ms); if (!player?.playing) player?.play().then(updatePlayBtn); } }));
   renderSpeakerBar();
 
-  box.replaceChildren(el('div', { class: 'd-head' }, title, meta, langInfo, notices, retransPicker, actions, speakerBar, playerRow), segBox);
+  // 字幕 / 纪要 标签。纪要里点时间：切回字幕，从那句话开始播放
+  const notesBox = el('div', { id: 'notesBox', class: 'hidden' });
+  const tabBtns = [['segs', 'notes.tabCaptions'], ['notesBox', 'notes.tabNotes']].map(([id, key]) => el('button', {
+    class: `tab${id === 'segs' ? ' sel' : ''}`, 'data-tab': id, text: t(key), onclick: () => showTab(id),
+  }));
+  function showTab(id) {
+    for (const b of tabBtns) b.classList.toggle('sel', b.dataset.tab === id);
+    segBox.classList.toggle('hidden', id !== 'segs');
+    notesBox.classList.toggle('hidden', id !== 'notesBox');
+  }
+  notesPanel = createNotesPanel({
+    log,
+    onJump: (ms) => {
+      showTab('segs');
+      let target = null;
+      for (const n of segBox.querySelectorAll('.seg')) { if (Number(n.dataset.start) <= ms) target = n; else break; }
+      target?.scrollIntoView({ block: 'center' });
+      if (player) { player.seek(ms); if (!player.playing) player.play().then(updatePlayBtn); }
+    },
+  });
+  notesPanel.set({ meetingId: meeting.id, notes: meeting.notes || null, state: 'idle', error: null, live, hasKey: !!(await getSettings()).openaiApiKey });
+  notesBox.append(notesPanel.root);
+
+  box.replaceChildren(el('div', { class: 'd-head' }, title, meta, langInfo, notices, retransPicker, actions, speakerBar, playerRow,
+    el('div', { class: 'tabs' }, tabBtns)), segBox, notesBox);
 
   function updatePlayBtn() { playBtn.textContent = player?.playing ? t('hist.pause') : t('hist.play'); }
 
@@ -454,6 +480,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
   if (msg?.type === EVT.SPEAKERS) {
     speakerUpdaters.get(msg.meetingId)?.().catch((e) => log.warn('refresh speakers failed', e));
+  }
+  if (msg?.type === EVT.NOTES) {
+    notesPanel?.onMessage(msg);
+    if (msg.notes) loadList().catch(() => {}); // 会后的纪要可能给会议起了名字
   }
   return false;
 });

@@ -11,6 +11,8 @@ import { langPicker } from '../ui/langs.js';
 import { initI18n, t } from '../ui/i18n.js';
 import { openSpeakerDialog } from '../ui/speakers.js';
 import { buildSpeakerView } from '../lib/speakers.js';
+import { getSettings } from '../lib/settings.js';
+import { createNotesPanel } from '../ui/notes.js';
 
 const log = createLogger('sidepanel');
 installGlobalErrorHandlers(log);
@@ -56,9 +58,52 @@ $('#langs').append(picker);
 const list = $('#list');
 const liveBox = $('#live'); // 实时行容器，会被移进列表底部，保留引用
 
+// ---------- 字幕 / 纪要 标签 ----------
+let tab = 'list';
+function showTab(next) {
+  tab = next;
+  for (const b of document.querySelectorAll('#tabs .tab')) b.classList.toggle('sel', b.dataset.tab === next);
+  $('#list').classList.toggle('hidden', next !== 'list');
+  $('#notesView').classList.toggle('hidden', next !== 'notesView');
+  $('#jump').classList.toggle('hidden', next !== 'list' || stickToBottom);
+}
+for (const b of document.querySelectorAll('#tabs .tab')) b.addEventListener('click', () => showTab(b.dataset.tab));
+
+// 纪要里点时间：回到字幕，滚到那句话
+function jumpTo(ms) {
+  showTab('list');
+  let target = null;
+  for (const n of list.querySelectorAll('.seg[data-start]')) {
+    if (n.dataset.start !== '' && Number(n.dataset.start) <= ms) target = n;
+    else if (target) break;
+  }
+  if (!target) return;
+  stickToBottom = false;
+  target.scrollIntoView({ block: 'center' });
+  target.classList.add('flash');
+  setTimeout(() => target.classList.remove('flash'), 1500);
+  $('#jump').classList.remove('hidden');
+}
+
+const notesPanel = createNotesPanel({ log, onJump: jumpTo });
+$('#notesView').append(notesPanel.root);
+
+// ---------- 悬浮字幕开关 ----------
+$('#captions').addEventListener('change', async () => {
+  const enabled = $('#captions').checked;
+  try {
+    const res = await sendToSw(SW.SET_CAPTIONS, { enabled });
+    if (!res?.ok) throw new Error(res?.error || 'failed');
+    log.info('floating captions toggled from side panel', { enabled });
+  } catch (e) {
+    log.error('toggle floating captions failed', e);
+    $('#captions').checked = !enabled;
+  }
+});
+
 list.addEventListener('scroll', () => {
   stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-  $('#jump').classList.toggle('hidden', stickToBottom);
+  $('#jump').classList.toggle('hidden', stickToBottom || tab !== 'list');
 });
 $('#jump').addEventListener('click', () => { stickToBottom = true; scrollDown(); $('#jump').classList.add('hidden'); });
 
@@ -172,7 +217,8 @@ function appendSegment(seg) {
 
 async function loadMeeting(id) {
   meetingId = id;
-  const [meeting, loaded] = await Promise.all([getMeeting(id), getSegments(id)]);
+  const [meeting, loaded, settings] = await Promise.all([getMeeting(id), getSegments(id), getSettings()]);
+  notesPanel.set({ meetingId: id, notes: meeting?.notes || null, state: 'idle', error: null, live: !!active, hasKey: !!settings.openaiApiKey });
   segs = loaded;
   speakers = meeting?.speakers || {};
   view = buildSpeakerView(speakers, segs);
@@ -186,8 +232,10 @@ async function loadMeeting(id) {
 }
 
 async function refresh() {
-  const state = await sendToSw(SW.GET_STATE);
+  const [state, settings] = await Promise.all([sendToSw(SW.GET_STATE), getSettings()]);
   active = state?.active || null;
+  $('#captions').checked = active ? !!active.captions : !!settings.floatingCaptions;
+  notesPanel.set({ live: !!active, hasKey: !!settings.openaiApiKey });
   clearInterval(timer);
   $('#stop').classList.toggle('hidden', !active);
   $('#langRow').classList.toggle('hidden', !active);
@@ -213,6 +261,7 @@ async function refresh() {
       sourceState[src] = { status: s.status, detail: s.detail, level: s.level };
       if (s.partial) partials[src] = s.partial;
     }
+    if (live.notes) notesPanel.set({ state: live.notes.state, error: live.notes.error });
   }
   renderSources();
   renderPartials();
@@ -225,6 +274,8 @@ chrome.runtime.onMessage.addListener((msg) => {
     runPendingExports(log).catch((e) => log.error('pending export failed', e));
     return false;
   }
+  if (msg.type === EVT.CAPTIONS_STATE) { $('#captions').checked = !!msg.enabled; return false; }
+  if (msg.type === EVT.NOTES) { notesPanel.onMessage(msg); return false; }
   if (msg.meetingId == null || msg.meetingId !== meetingId) return false;
   if (msg.type === EVT.AUTO_STOP) { setAutoStop(msg.pending ? msg.deadline : null); return false; }
   if (msg.type === EVT.SPEAKERS) {

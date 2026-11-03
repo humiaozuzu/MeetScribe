@@ -64,6 +64,8 @@ export function buildMarkdown(meeting, segments) {
     lines.push(`- Transcript gaps: ${gaps.map((g) => `${g.source === 'me' ? 'Me' : 'Others'} ${formatClock(g.startMs)}–${formatClock(g.endMs)}`).join(', ')}`);
   }
   lines.push('');
+  const notes = notesMarkdown(meeting.notes);
+  if (notes) lines.push(notes, '');
   lines.push('## Transcript');
   lines.push('');
   const view = buildSpeakerView(meeting.speakers, segments);
@@ -73,4 +75,30 @@ export function buildMarkdown(meeting, segments) {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+// AI 纪要 → Markdown（标题固定英文，和导出的其它部分一致；内容是纪要语言）。没有纪要返回 ''。
+export function notesMarkdown(n) {
+  if (!n || (!n.summary && !n.topics?.length && !n.conclusions?.length && !n.todos?.length)) return '';
+  const at = (ms) => (ms == null ? '' : ` [${formatClock(ms)}]`);
+  const out = ['## Notes', ''];
+  if (n.summary) out.push(n.summary, '');
+  if (n.topics?.length) {
+    out.push('### Topics', '');
+    for (const tp of n.topics) {
+      out.push(`**${tp.title}**${at(tp.startMs)}${tp.summary ? ` — ${tp.summary}` : ''}`, '');
+      for (const p of tp.points) out.push(`- ${p.text}${at(p.t)}`);
+      if (tp.points.length) out.push('');
+    }
+  }
+  if (n.conclusions?.length) {
+    out.push('### Decisions', '', ...n.conclusions.map((c) => `- ${c.text}${at(c.t)}`), '');
+  }
+  if (n.todos?.length) {
+    out.push('### Action items', '', ...n.todos.map((td) => `- [ ] ${td.owner ? `**${td.owner}**: ` : ''}${td.text}${at(td.t)}`), '');
+  }
+  if (n.terms?.length) {
+    out.push('### Names and terms', '', ...n.terms.map((tm) => `- **${tm.name}**${tm.note ? ` — ${tm.note}` : ''}${tm.heard?.length ? ` (heard as: ${tm.heard.join(', ')})` : ''}`), '');
+  }
+  return out.join('\n').trimEnd();
 }

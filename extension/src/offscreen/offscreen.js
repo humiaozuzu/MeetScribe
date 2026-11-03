@@ -6,22 +6,33 @@ import { createLogger, installGlobalErrorHandlers, setLogLevel, flushLogs } from
 import { EVT, OFFSCREEN, STATUS, broadcast } from '../lib/messages.js';
 import { mergeGaps } from '../lib/transcript.js';
 import { TrackPipeline } from './track.js';
+import { LiveNotes } from './live-notes.js';
+import { CaptionState } from '../lib/captions.js';
 
 const baseLog = createLogger('offscreen');
 installGlobalErrorHandlers(baseLog);
 baseLog.info('offscreen document loaded');
 
-let session = null; // { meeting, ctx, pipelines: { them, me }, gaps, log, levelTimer }
+let session = null; // { meeting, ctx, pipelines: { them, me }, gaps, log, levelTimer, captions }
+// 会议结束后 AI 纪要还要再整理一次，比 session 活得久：meetingId → LiveNotes
+const notesByMeeting = new Map();
+let finishingNotes = 0;
+
+const CAPTION_THROTTLE_MS = 200;
+const CAPTION_EXPIRE_CHECK_MS = 1000;
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== 'offscreen') return false;
   const handlers = {
-    [OFFSCREEN.PING]: async () => ({ ok: true, active: !!session }),
+    [OFFSCREEN.PING]: async () => ({ ok: true, active: !!session, busy: finishingNotes > 0 }),
     [OFFSCREEN.START]: () => start(msg),
     [OFFSCREEN.STOP]: () => stop(msg.reason),
     [OFFSCREEN.GET_LIVE]: async () => getLive(),
     [OFFSCREEN.SET_LANGUAGES]: () => setLanguages(msg.languageHints),
     [OFFSCREEN.SET_MIC_MUTED]: async () => setMicMuted(msg.muted, msg.signal),
+    [OFFSCREEN.SET_CAPTIONS]: async () => setCaptions(msg.enabled),
+    [OFFSCREEN.NOTES_NOW]: async () => notesNow(),
+    [OFFSCREEN.FINISH_NOTES]: () => finishNotes(msg.meetingId),
   };
   const h = handlers[msg.type];
   if (!h) return false;
@@ -64,6 +75,15 @@ async function start({ meeting, streamId, settings, micMuted }) {
 
   session = { meeting, ctx, playback, pipelines: {}, gaps: [], log, settings, micMuted: micMuted ?? null };
 
+  // AI 纪要：填了 OpenAI key 才有。只读写文字，和录音、转写互不影响。
+  if (settings.openaiApiKey) {
+    session.notes = new LiveNotes({ meetingId: meeting.id, settings, log, notes: null });
+    notesByMeeting.set(meeting.id, session.notes);
+    session.notes.start();
+  }
+  setCaptions(!!settings.floatingCaptions);
+  const hooks = trackHooks(session);
+
   const onGap = (gap) => {
     log.warn('transcription gap recorded', gap);
     session.gaps.push(gap);
@@ -76,7 +96,7 @@ async function start({ meeting, streamId, settings, micMuted }) {
     broadcast({ type: EVT.TRACK_ENDED, meetingId: meeting.id, source: 'them' });
   });
 
-  session.pipelines.them = new TrackPipeline({ source: 'them', stream: tabStream, ctx, meeting, settings, log, onGap });
+  session.pipelines.them = new TrackPipeline({ source: 'them', stream: tabStream, ctx, meeting, settings, log, onGap, hooks: hooks('them') });
   await session.pipelines.them.start();
 
   // 3. 麦克风（失败不影响对方那一路）
@@ -91,7 +111,7 @@ async function start({ meeting, streamId, settings, micMuted }) {
           autoGainControl: true,
         },
       });
-      session.pipelines.me = new TrackPipeline({ source: 'me', stream: micStream, ctx, meeting, settings, log, onGap });
+      session.pipelines.me = new TrackPipeline({ source: 'me', stream: micStream, ctx, meeting, settings, log, onGap, hooks: hooks('me') });
       session.pipelines.me.setMuted(session.micMuted === true);
       await session.pipelines.me.start();
     } catch (e) {
@@ -141,6 +161,8 @@ async function stop(reason = 'user') {
   const { log } = s;
   log.info('stop requested', { reason });
   clearInterval(s.levelTimer);
+  s.notes?.stopTimer();
+  stopCaptionFeed(s);
 
   const results = await Promise.allSettled(Object.values(s.pipelines).map((p) => p.stop()));
   results.forEach((r) => { if (r.status === 'rejected') log.error('pipeline stop failed', r.reason); });
@@ -196,9 +218,86 @@ function setMicMuted(muted, signal) {
   return { ok: true };
 }
 
+// ---------- 悬浮字幕 ----------
+// 每路音频的实时行 / 刚定稿的片段 → CaptionState → 节流后广播 rt:caption，SW 转发给会议标签页。
+// 关着的时候什么都不发（不然 SW 会被每 200ms 一条消息一直叫醒）。
+
+function trackHooks(s) {
+  return (source) => ({
+    onPartial: (p) => captionChanged(s, () => s.captionState.partial(source, p, Date.now())),
+    onCommit: (seg) => captionChanged(s, () => s.captionState.commit(source, seg, Date.now())),
+    onUpdate: (seg) => captionChanged(s, () => s.captionState.update(source, seg, Date.now())),
+    onSaved: (seg) => s.notes?.onSaved(seg),
+  });
+}
+
+function captionChanged(s, apply) {
+  apply();
+  if (!s.captionsOn || s.captionTimer) return;
+  s.captionTimer = setTimeout(() => { s.captionTimer = null; sendCaptions(s); }, CAPTION_THROTTLE_MS);
+}
+
+function sendCaptions(s) {
+  const rows = s.captionState.rows(Date.now());
+  const key = JSON.stringify(rows);
+  if (key === s.captionSent) return;
+  s.captionSent = key;
+  broadcast({ type: EVT.CAPTION, meetingId: s.meeting.id, rows });
+}
+
+function setCaptions(enabled) {
+  const s = session;
+  if (!s) return { ok: false, error: 'not recording' };
+  s.captionState ||= new CaptionState();
+  if (enabled === !!s.captionsOn) return { ok: true };
+  s.log.info('floating captions', { enabled });
+  stopCaptionFeed(s);
+  s.captionsOn = enabled;
+  if (enabled) {
+    s.captionSent = null;
+    // 定稿片段过一会儿要从字幕条上消失，没有新消息时也得检查
+    s.captionExpire = setInterval(() => sendCaptions(s), CAPTION_EXPIRE_CHECK_MS);
+    sendCaptions(s);
+  }
+  return { ok: true };
+}
+
+function stopCaptionFeed(s) {
+  s.captionsOn = false;
+  clearTimeout(s.captionTimer);
+  clearInterval(s.captionExpire);
+  s.captionTimer = null;
+  s.captionExpire = null;
+}
+
+// ---------- AI 纪要 ----------
+
+function notesNow() {
+  if (!session?.notes) return { ok: false, error: session ? 'notes not enabled (no OpenAI key)' : 'not recording' };
+  return session.notes.updateNow();
+}
+
+// 会议结束后（session 已经清掉）整理完整纪要。SW 等这个返回后才关 offscreen。
+async function finishNotes(meetingId) {
+  const notes = notesByMeeting.get(meetingId);
+  if (!notes) return { ok: true, skipped: 'no-notes' };
+  finishingNotes++;
+  try {
+    return await notes.finish();
+  } finally {
+    finishingNotes--;
+    notesByMeeting.delete(meetingId);
+    await flushLogs();
+  }
+}
+
 function getLive() {
   if (!session) return { ok: true, active: false };
-  const live = { ok: true, active: true, meetingId: session.meeting.id, languageHints: session.settings.languageHints, micMuted: session.micMuted, sources: {} };
+  const live = {
+    ok: true, active: true, meetingId: session.meeting.id, languageHints: session.settings.languageHints, micMuted: session.micMuted, sources: {},
+    notes: session.notes ? { state: session.notes.state, error: session.notes.error } : null,
+    captions: !!session.captionsOn,
+  };
   for (const [k, p] of Object.entries(session.pipelines)) {
     live.sources[k] = { status: p.status, detail: p.statusDetail, partial: p.partial, level: p.level };
   }

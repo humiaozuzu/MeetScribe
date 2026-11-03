@@ -3,10 +3,11 @@
 
 import { putMeeting, listMeetings, updateMeeting, getChunks, deleteMeeting } from './lib/db.js';
 import { createLogger, installGlobalErrorHandlers, pruneOldLogs, flushLogs } from './lib/log.js';
-import { EVT, OFFSCREEN, SW, broadcast } from './lib/messages.js';
+import { EVT, OFFSCREEN, SW, CAPTION, broadcast } from './lib/messages.js';
 import { getSettings, saveSettings, redactSettings } from './lib/settings.js';
 import { SONIOX_RT_MODEL } from './lib/soniox-realtime.js';
 import { cleanTitle } from './lib/format.js';
+import { resolveUiLang, setUiLang, t } from './lib/i18n.js';
 
 const log = createLogger('sw');
 installGlobalErrorHandlers(log);
@@ -68,6 +69,17 @@ async function closeOffscreen() {
   }
 }
 
+// 上一场的完整纪要可能还在 offscreen 里整理，不要把它关掉
+async function closeOffscreenIfIdle() {
+  if (!(await hasOffscreen())) return;
+  const res = await sendToOffscreen({ type: OFFSCREEN.PING }, 2000).catch(() => null);
+  if (res?.busy || res?.active) {
+    log.info('offscreen kept open', { active: res.active, busy: res.busy });
+    return;
+  }
+  await closeOffscreen();
+}
+
 function sendToOffscreen(msg, timeoutMs = 15000) {
   return Promise.race([
     chrome.runtime.sendMessage({ ...msg, target: 'offscreen' }),
@@ -126,7 +138,9 @@ async function startRecording(tabId, languageHints) {
     await setActive({
       meetingId: meeting.id, tabId, title: meeting.title, startedAt: meeting.startedAt, micError: res.micError || null,
       host, seenInCall: presence?.inCall === true, autoStopDeadline: null, autoStopSuppressed: false,
+      captions: !!settings.floatingCaptions,
     });
+    if (settings.floatingCaptions) await showCaptions(tabId, meeting.id);
     // 开始期间静音状态可能变了（那时还不算"录制中"，没有转发）
     const latestMuted = (await getMicStates())[tabId]?.muted ?? null;
     if (latestMuted !== micMuted) await sendToOffscreen({ type: OFFSCREEN.SET_MIC_MUTED, muted: latestMuted, signal: 'sync-after-start' }).catch((e) => log.warn('sync mic muted failed', e));
@@ -135,7 +149,7 @@ async function startRecording(tabId, languageHints) {
   } catch (e) {
     log.error('start recording failed', { error: e, meetingId: meeting?.id });
     await sendToOffscreen({ type: OFFSCREEN.STOP, reason: 'start-failed' }).catch(() => {});
-    await closeOffscreen();
+    await closeOffscreenIfIdle();
     if (meeting) {
       // 没录到任何东西就删掉，录到了就保留
       const chunks = await getChunks(meeting.id).catch(() => []);
@@ -154,6 +168,7 @@ async function stopRecording(reason) {
   if (!active) return { ok: true, alreadyStopped: true };
   if (busy === 'stopping') return { ok: true, inProgress: true };
   busy = 'stopping';
+  let finalizeNotes = false;
   clearTimeout(autoStopTimer);
   log.info('stop recording', { reason, meetingId: active.meetingId });
   try {
@@ -166,8 +181,11 @@ async function stopRecording(reason) {
         if (m.status === 'recording') { m.status = 'interrupted'; m.endedAt = Date.now(); }
       }).catch(() => {});
     }
-    await closeOffscreen();
+    if (active.captions) hideCaptions(active.tabId);
     const settings = await getSettings();
+    // 填了 OpenAI key：offscreen 还要整理完整纪要，做完再关（见 finishNotesThenClose）
+    finalizeNotes = !!settings.openaiApiKey;
+    if (!finalizeNotes) await closeOffscreen();
     if (settings.autoExport) {
       await updateMeeting(active.meetingId, (m) => { m.exportPending = true; }).catch((e) => log.warn('mark exportPending failed', e));
     }
@@ -177,7 +195,76 @@ async function stopRecording(reason) {
   } finally {
     busy = null;
     flushLogs();
+    // 不阻塞停止：这期间可以开始下一场会议（offscreen 会被复用，不会被关掉）
+    if (finalizeNotes) finishNotesThenClose(active.meetingId);
   }
+}
+
+// 会后完整纪要：可能要一两分钟。offscreen 期间每 15 秒广播一次状态，SW 收到消息不会被挂起；
+// 万一 SW 还是被挂起了，offscreen 照样做完并保存，下次唤醒时 recoverStaleMeetings 会关掉空闲的 offscreen。
+async function finishNotesThenClose(meetingId) {
+  try {
+    const res = await sendToOffscreen({ type: OFFSCREEN.FINISH_NOTES, meetingId }, 10 * 60_000);
+    log.info('final notes finished', { meetingId, ...res });
+  } catch (e) {
+    log.error('final notes failed', { meetingId, error: e });
+  }
+  const { active } = await getState();
+  if (!active && !busy) await closeOffscreenIfIdle();
+  flushLogs();
+}
+
+// ---------- 悬浮字幕 ----------
+// offscreen 广播 rt:caption（只有开着时才发），这里转发给录制中的标签页里的 content/captions.js。
+// 字幕条和侧边栏无关：关掉侧边栏，字幕条照常显示。
+
+let captionTab = null; // { meetingId, tabId }：SW 被挂起后为空，下次从 storage.session 取
+
+async function captionLabels() {
+  const settings = await getSettings();
+  setUiLang(resolveUiLang(settings.uiLanguage, navigator.languages));
+  return {
+    me: t('common.me'),
+    them: t('common.them'),
+    labels: { drag: t('cap.drag'), smaller: t('cap.smaller'), bigger: t('cap.bigger'), close: t('cap.close') },
+  };
+}
+
+async function showCaptions(tabId, meetingId) {
+  captionTab = { meetingId, tabId };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/captions.js'] });
+    await chrome.tabs.sendMessage(tabId, { type: CAPTION.SHOW, ...(await captionLabels()) });
+    log.info('floating captions shown', { tabId, meetingId });
+  } catch (e) {
+    log.warn('show floating captions failed', { tabId, error: e.message });
+  }
+}
+
+function hideCaptions(tabId) {
+  chrome.tabs.sendMessage(tabId, { type: CAPTION.HIDE }).catch(() => { /* 标签页已关闭或已跳走 */ });
+}
+
+async function relayCaption(msg) {
+  if (captionTab?.meetingId !== msg.meetingId) {
+    const { active } = await getState();
+    if (!active?.captions || active.meetingId !== msg.meetingId) return;
+    captionTab = { meetingId: active.meetingId, tabId: active.tabId };
+  }
+  chrome.tabs.sendMessage(captionTab.tabId, { type: CAPTION.ROWS, rows: msg.rows }).catch(() => { /* 页面跳转中，等重新注入 */ });
+}
+
+async function setCaptions(enabled) {
+  enabled = !!enabled;
+  await saveSettings({ floatingCaptions: enabled });
+  const active = await patchActive({ captions: enabled });
+  log.info('set floating captions', { enabled, meetingId: active?.meetingId });
+  broadcast({ type: EVT.CAPTIONS_STATE, enabled });
+  if (!active) return { ok: true, applied: false };
+  if (enabled) await showCaptions(active.tabId, active.meetingId);
+  else { hideCaptions(active.tabId); captionTab = null; }
+  await sendToOffscreen({ type: OFFSCREEN.SET_CAPTIONS, enabled }).catch((e) => log.warn('offscreen set captions failed', e));
+  return { ok: true, applied: true };
 }
 
 // 会议中修改语言：存为下一场的默认值，并让 offscreen 用新配置重连两路转写。
@@ -298,6 +385,8 @@ async function recoverStaleMeetings() {
     log.warn('active meeting but offscreen document is gone — marking interrupted', { meetingId: active.meetingId });
     await setActive(null);
   }
+  // 没有会议、也没在整理纪要的 offscreen（例如整理纪要时 SW 被挂起，没来得及关）
+  if (!active && offscreenAlive && !busy) await closeOffscreenIfIdle();
   const current = active && offscreenAlive ? active.meetingId : null;
   const meetings = await listMeetings();
   for (const m of meetings) {
@@ -316,6 +405,10 @@ async function recoverStaleMeetings() {
 // ---------- 事件 ----------
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === EVT.CAPTION) {
+    relayCaption(msg).catch((e) => log.warn('relay caption failed', e));
+    return false;
+  }
   if (msg?.type === EVT.TRACK_ENDED) {
     stopRecording('tab-audio-ended').catch((e) => log.error('auto stop failed', e));
     return false;
@@ -333,6 +426,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     [SW.START]: () => startRecording(msg.tabId, msg.languageHints),
     [SW.SET_LANGUAGES]: () => setLanguages(msg.languageHints),
     [SW.CANCEL_AUTO_STOP]: () => cancelAutoStop('user', { suppress: true }),
+    [SW.SET_CAPTIONS]: () => setCaptions(msg.enabled),
     [SW.STOP]: () => stopRecording(msg.reason || 'user'),
     [SW.GET_STATE]: () => getState(),
   }[msg.type];
@@ -366,11 +460,16 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
-// 录制中的标签页跳转到别的网站（例如 Teams 通话结束后跳走），也视为离开会议
+// 录制中的标签页跳转到别的网站（例如 Teams 通话结束后跳走），也视为离开会议。
+// 页面重新加载后注入的悬浮字幕脚本没了，加载完再注入一次。
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (!changeInfo.url) return;
+  if (!changeInfo.url && changeInfo.status !== 'complete') return;
   const { active } = await getState();
   if (active?.tabId !== tabId) return;
+  if (changeInfo.status === 'complete') {
+    if (active.captions) await showCaptions(tabId, active.meetingId);
+    if (!changeInfo.url) return;
+  }
   let host = '';
   try { host = new URL(changeInfo.url).hostname; } catch {}
   if (active.host && host !== active.host) {

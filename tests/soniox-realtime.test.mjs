@@ -254,3 +254,32 @@ test('buildRealtimeConfig maps settings', () => {
   assert.deepEqual(cfg.translation, { type: 'one_way', target_language: 'en' });
   assert.equal(cfg.max_endpoint_delay_ms, 700);
 });
+
+test('latency: final and endpoint lag measured against audio sent, reported in stats', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  FakeWS.instances = [];
+  const infos = [];
+  const warns = [];
+  const log = { ...quietLog, info: (msg, data) => infos.push([msg, data]), warn: (msg, data) => warns.push([msg, data]) };
+  const { rt } = makeRt({ log, config: { model: 'stt-rt-v5', translation: { type: 'one_way', target_language: 'zh' } } });
+  rt.start();
+  const ws = FakeWS.instances[0];
+  ws._open();
+  for (let i = 0; i < 20; i++) rt.push(pcm(1600), i * 1600); // 2 秒音频已发出
+  ws._msg({ tokens: [{ text: 'Hi', start_ms: 1000, end_ms: 1400, is_final: true }] }); // 词说完 600ms 后定稿
+  ws._msg({ tokens: [{ text: '<end>', is_final: true }] });                            // 断句：同样 600ms
+  ws._msg({ tokens: [{ text: '你好', translation_status: 'translation', is_final: true }] });
+  for (let i = 20; i < 100; i++) rt.push(pcm(1600), i * 1600);                         // 到 10 秒
+  ws._msg({ tokens: [{ text: 'slow', start_ms: 3000, end_ms: 3500, is_final: true }, { text: '<end>', is_final: true }] });
+  assert.deepEqual(warns.map(([m]) => m), ['soniox slow finalization']);
+  assert.equal(warns[0][1].lagMs, 6500);
+  rt._logStats();
+  const stats = infos.find(([m]) => m.startsWith('soniox stats'))[1];
+  assert.deepEqual(stats.latency.finalMs, { n: 2, p50: 600, p95: 6500, max: 6500 });
+  assert.deepEqual(stats.latency.endpointMs, { n: 2, p50: 600, p95: 6500, max: 6500 });
+  assert.equal(stats.latency.translationMs.n, 1);
+  rt._logStats();
+  assert.equal(infos.filter(([m]) => m.startsWith('soniox stats'))[1][1].latency, undefined, 'reset after each report');
+  rt.stop();
+  mock.timers.reset();
+});

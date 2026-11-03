@@ -34,7 +34,7 @@ try {
   });
 } catch { /* 非扩展环境（单元测试） */ }
 
-const SENSITIVE = /^(api_?key|sonioxApiKey|key|authorization)$/i;
+const SENSITIVE = /^(api_?key|sonioxApiKey|openaiApiKey|key|authorization)$/i;
 
 function sanitize(data, depth = 0) {
   if (data == null || depth > 4) return data;

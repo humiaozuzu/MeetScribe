@@ -7,6 +7,8 @@
 //   - key 无效 / 欠费等不可恢复错误 → FAILED，不再重连（录音不受影响）。
 //   - 单流 300 分钟上限：到 ROTATE_AFTER_MS 主动换新连接。
 //   - 长时间没发音频时发 keepalive。
+//   - 延迟统计（只记数字）：词说完 → final、一句话说完 → <end>、<end> → 第一个定稿译文，
+//     随 'soniox stats' 每分钟输出 p50 / p95 / max；断句特别慢时单独记一条 'soniox slow finalization'。
 //   - 会议里麦克风静音 → setPaused(true)：Soniox 按流的时长计费（不是按音频），所以静音
 //     超过 PAUSE_CLOSE_AFTER_MS 就关闭连接，取消静音再重连。宽限期内发静音帧代替真实音频，
 //     时间轴保持连续，短暂开关麦不必重连。静音期间的音频不转写，也不算缺口。
@@ -15,6 +17,7 @@
 // onSessionStart(firstSample) 让调用方把 token 的会话内时间换算到会议时间轴。
 
 import { STATUS } from './messages.js';
+import { LatencyStats } from './latency.js';
 
 export const SONIOX_RT_URL = 'wss://stt-rt.soniox.com/transcribe-websocket';
 export const SONIOX_RT_MODEL = 'stt-rt-v5';
@@ -27,6 +30,7 @@ const STOP_TIMEOUT_MS = 8_000;
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 const STATS_EVERY_MS = 60_000;
 const PAUSE_CLOSE_AFTER_MS = 10_000;
+const SLOW_ENDPOINT_MS = 5_000;
 
 // 这些错误重连也没用。
 const FATAL_CODES = new Set([400, 401, 402, 403]);
@@ -91,6 +95,11 @@ export class SonioxRealtime {
     this.timers = {};
     this.stats = { bytes: 0, chunks: 0, responses: 0, finalTokens: 0, dropped: 0 };
     this.lastSendAt = 0;
+    this.latency = { final: new LatencyStats(), endpoint: new LatencyStats(), translation: new LatencyStats() };
+    this.sessionFirstSample = 0;
+    this.lastWordEndMs = null;   // 本句最后一个 final 词的 end_ms（会话内时间）
+    this.awaitTranslationAt = null; // 收到 <end> 的时刻，等第一个定稿译文
+    this.slowWarned = false;
   }
 
   _setStatus(status, detail) {
@@ -139,6 +148,9 @@ export class SonioxRealtime {
         this.onGap(this.sentUpTo, firstSample, 'disconnected');
       }
       this.sentUpTo = firstSample;
+      this.sessionFirstSample = firstSample;
+      this.lastWordEndMs = null;
+      this.awaitTranslationAt = null;
       this.onSessionStart(firstSample, sessionNo);
       const backlogMs = Math.round((this.pendingSamples / SAMPLE_RATE) * 1000);
       if (backlogMs) this.log.info('soniox flushing buffered audio', { backlogMs });
@@ -174,6 +186,7 @@ export class SonioxRealtime {
           this.log.info('soniox first tokens', { sessionNo, msSinceOpen: Date.now() - openedAt });
         }
         for (const t of msg.tokens) if (t.is_final) this.stats.finalTokens++;
+        this._measure(msg.tokens, sessionNo);
         try {
           this.onTokens(msg.tokens);
         } catch (e) {
@@ -372,7 +385,50 @@ export class SonioxRealtime {
     }
   }
 
+  // 延迟按音频时间算：sentMs 是本次会话已发给 Soniox 的音频时长，一个词的 end_ms 离它多远，
+  // 就是这个词说完后多久才定稿（含网络往返和 Soniox 处理）。<end> 的延迟是一句话最后一个词说完
+  // 到收到断句，包含 max_endpoint_delay_ms 的等待。译文延迟用墙上时间：<end> 到第一个定稿译文。
+  _measure(tokens, sessionNo) {
+    const sentMs = ((this.sentUpTo - this.sessionFirstSample) / SAMPLE_RATE) * 1000;
+    let batchEnd = null;
+    for (const t of tokens) {
+      if (!t.is_final) continue;
+      if (t.translation_status === 'translation') {
+        if (this.awaitTranslationAt != null) {
+          this.latency.translation.add(Date.now() - this.awaitTranslationAt);
+          this.awaitTranslationAt = null;
+        }
+        continue;
+      }
+      if (t.text === '<end>' || t.text === '<fin>') {
+        if (t.text === '<end>' && this.lastWordEndMs != null) {
+          const lagMs = Math.round(sentMs - this.lastWordEndMs);
+          this.latency.endpoint.add(lagMs);
+          if (lagMs > SLOW_ENDPOINT_MS && !this.slowWarned) {
+            this.slowWarned = true; // 每个统计周期最多一条
+            this.log.warn('soniox slow finalization', { sessionNo, lagMs, maxEndpointDelayMs: this.config.max_endpoint_delay_ms });
+          }
+        }
+        if (this.config.translation && this.lastWordEndMs != null) this.awaitTranslationAt = Date.now();
+        this.lastWordEndMs = null;
+        continue;
+      }
+      if (t.end_ms != null) {
+        batchEnd = Math.max(batchEnd ?? 0, t.end_ms);
+        this.lastWordEndMs = Math.max(this.lastWordEndMs ?? 0, t.end_ms);
+      }
+    }
+    if (batchEnd != null) this.latency.final.add(sentMs - batchEnd);
+  }
+
   _logStats() {
+    const latency = {};
+    for (const [k, s] of Object.entries(this.latency)) {
+      const sum = s.summary();
+      if (sum) latency[`${k}Ms`] = sum;
+      s.reset();
+    }
+    this.slowWarned = false;
     this.log.info('soniox stats (since last report)', {
       status: this.status,
       kbSent: Math.round(this.stats.bytes / 1024),
@@ -381,6 +437,7 @@ export class SonioxRealtime {
       finalTokens: this.stats.finalTokens,
       droppedMs: Math.round((this.stats.dropped / SAMPLE_RATE) * 1000),
       bufferedMs: Math.round((this.pendingSamples / SAMPLE_RATE) * 1000),
+      ...(Object.keys(latency).length ? { latency } : {}),
     });
     this.stats = { bytes: 0, chunks: 0, responses: 0, finalTokens: 0, dropped: 0 };
   }

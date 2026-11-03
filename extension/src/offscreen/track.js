@@ -15,7 +15,9 @@ const SILENCE_WARN_MS = 60_000;
 const PARTIAL_THROTTLE_MS = 150;
 
 export class TrackPipeline {
-  constructor({ source, stream, ctx, meeting, settings, log, onGap }) {
+  // hooks：{ onCommit(seg), onSaved(seg), onUpdate(seg), onPartial(p) }，给悬浮字幕和 AI 纪要用，都是可选的。
+  constructor({ source, stream, ctx, meeting, settings, log, onGap, hooks = {} }) {
+    this.hooks = hooks;
     this.source = source;
     this.stream = stream;
     this.ctx = ctx;
@@ -224,13 +226,23 @@ export class TrackPipeline {
     broadcast({ type: EVT.STATUS, meetingId: this.meetingId, source: this.source, status, detail: detail || null });
   }
 
+  _hook(name, arg) {
+    try {
+      this.hooks[name]?.(arg);
+    } catch (e) {
+      this.log.error(`hook ${name} threw`, e);
+    }
+  }
+
   _saveSegment(seg) {
+    this._hook('onCommit', seg);
     const full = { ...seg, meetingId: this.meetingId };
     this.dbChain = this.dbChain.then(async () => {
       try {
         full.id = await addSegment(full);
         seg.id = full.id; // assembler.last 指向 seg，后续译文更新需要 id
         broadcast({ type: EVT.SEGMENT, meetingId: this.meetingId, segment: full });
+        this._hook('onSaved', full);
         this.log.debug('segment saved', { id: full.id, startMs: full.startMs, len: full.text.length });
       } catch (e) {
         this.log.error('save segment failed', { error: e, text: full.text.slice(0, 50) });
@@ -239,6 +251,7 @@ export class TrackPipeline {
   }
 
   _updateSegment(seg) {
+    this._hook('onUpdate', seg);
     this.dbChain = this.dbChain.then(async () => {
       if (seg.id == null) return;
       const full = { ...seg, meetingId: this.meetingId };
@@ -252,6 +265,7 @@ export class TrackPipeline {
   }
 
   _onPartial(p) {
+    if (p !== this.partial) this._hook('onPartial', p); // 节流重发的同一个 p 不再通知
     this.partial = p;
     const now = Date.now();
     const empty = !p.finalText && !p.pendingText;

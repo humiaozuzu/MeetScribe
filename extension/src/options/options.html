@@ -76,6 +76,39 @@
       </div>
     </div>
     <div class="faint" data-i18n="opt.endpointHint">停顿多久算一句话结束。越小字幕定稿越快，但容易把一句话切碎、识别准确率也略降。默认 1000。</div>
+    <label class="check" style="margin-top: 12px"><input id="captions" type="checkbox"><span>
+      <span data-i18n="opt.captions">在会议页面上显示悬浮字幕</span>
+      <span class="faint block" data-i18n="opt.captionsHint">字幕条显示在会议标签页里，关掉侧边栏也会保留，但切到别的标签页时看不到。会议中可在侧边栏开关。</span>
+    </span></label>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="opt.secNotes">AI 纪要（OpenAI）</h2>
+    <div class="field">
+      <label for="openaiKey" data-i18n="opt.openaiKey">OpenAI API key</label>
+      <div class="row">
+        <input id="openaiKey" type="password" autocomplete="off" placeholder="在 platform.openai.com 获取" data-i18n-placeholder="opt.openaiKeyPlaceholder">
+        <button id="toggleOpenaiKey" data-i18n="opt.show">显示</button>
+        <button id="testOpenai" data-i18n="opt.test">测试</button>
+      </div>
+      <div id="openaiResult" class="faint" data-i18n="opt.notesHint">只把文字转写（不含音频）发给 OpenAI，费用由你的 OpenAI 账户承担。不填 key 就没有纪要，录音和字幕不受影响。</div>
+    </div>
+    <div class="grid-2">
+      <div class="field">
+        <label for="openaiModel" data-i18n="opt.openaiModel">模型</label>
+        <input id="openaiModel" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="notesLang" data-i18n="opt.notesLang">纪要语言</label>
+        <select id="notesLang">
+          <option value="" data-i18n="opt.notesLangAuto">跟随界面语言</option>
+          <option value="zh">中文</option>
+          <option value="ja">日本語</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+    <label class="check"><input id="liveNotes" type="checkbox"><span data-i18n="opt.liveNotes">会议中实时更新纪要（约每分钟一次）；关掉则只在会后整理一次</span></label>
   </section>
 
   <section class="card">

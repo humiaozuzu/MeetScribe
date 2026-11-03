@@ -141,3 +141,21 @@ html:lang(en) .seg.async .meta::after { content: 'filled'; }
 .spk-confirm { display: grid; gap: 8px; padding: 10px; border-radius: var(--radius); background: var(--warn-soft); color: var(--text); font-size: 13px; }
 .notice.job { display: grid; gap: 6px; }
 .notice.job progress { width: 100%; height: 6px; }
+
+/* 字幕 / 纪要 标签（侧边栏、历史页） */
+.tabs { display: flex; gap: 4px; margin-top: 8px; }
+.tabs .tab { border: none; background: none; border-radius: 0; padding: 4px 10px; color: var(--text-soft); border-bottom: 2px solid transparent; }
+.tabs .tab:hover:not(:disabled) { background: none; color: var(--text); }
+.tabs .tab.sel { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* AI 纪要（ui/notes.js） */
+.notes-bar { display: flex; align-items: center; gap: 8px; justify-content: space-between; min-height: 32px; flex-wrap: wrap; }
+.notes h3 { font-size: 13px; margin: 16px 0 6px; color: var(--text-soft); text-transform: uppercase; letter-spacing: .02em; }
+.notes ul { margin: 4px 0; padding-left: 20px; }
+.notes li { margin: 3px 0; }
+.n-summary { margin: 8px 0; }
+.n-topic { margin: 8px 0 12px; }
+.n-topic-head { display: flex; gap: 6px; align-items: baseline; }
+.n-time { font-size: 12px; font-variant-numeric: tabular-nums; }
+button.n-time { padding: 0 2px; }
+.n-todos .chip { padding: 0 6px; }

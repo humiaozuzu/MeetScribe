@@ -4,7 +4,7 @@ Guidance for AI coding agents and human contributors working on this repository.
 
 ## Project in one paragraph
 
-MeetScribe is a Manifest V3 Chrome extension. It captures a Google Meet or Microsoft Teams tab plus the microphone and saves both locally (MediaRecorder → IndexedDB). It also streams 16 kHz PCM to Soniox real-time speech-to-text over WebSocket and shows live captions in the side panel. After a meeting, the user can fill transcription gaps or re-transcribe the recording with the Soniox async API. There is no backend: the user brings their own Soniox key. Design rationale is in `docs/architecture.md`.
+MeetScribe is a Manifest V3 Chrome extension. It captures a Google Meet or Microsoft Teams tab plus the microphone and saves both locally (MediaRecorder → IndexedDB). It also streams 16 kHz PCM to Soniox real-time speech-to-text over WebSocket and shows live captions in the side panel. After a meeting, the user can fill transcription gaps or re-transcribe the recording with the Soniox async API. Optionally, with the user's own OpenAI key, it keeps AI meeting notes from the text transcript, and it can show floating captions on the meeting page. There is no backend: the user brings their own keys. Design rationale is in `docs/architecture.md`.
 
 ## Commands
 
@@ -29,13 +29,18 @@ extension/
   src/offscreen/               hidden document that owns all audio + WebSockets
     offscreen.js               session orchestration (one meeting at a time)
     track.js                   one audio source: recorder branch + PCM/transcription branch
+    live-notes.js              AI notes during the meeting + the final pass after it
     pcm-worklet.js             AudioWorklet: downmix, resample to 16 kHz (lib/resampler.js), Int16, levels
   src/content/meeting-watch.js content script: "is the user in a call?" (hang-up button present)
+  src/content/captions.js      content script (injected when enabled): floating caption bar
   src/lib/
     soniox-realtime.js         WS client: reconnect, 10 s buffer, gap reporting, rotation, reconfigure
     soniox-async.js            REST: upload → transcribe → poll → fetch → delete
     transcript.js              token → segment assembly (pure, unit-tested)
     retranscribe.js            after-meeting gap fill / full re-transcription
+    notes.js, notes-runner.js  AI notes: prompt / reply parsing (pure) and the update runner
+    openai.js                  OpenAI Chat Completions client (notes only, text only)
+    captions.js, latency.js    what the floating caption bar shows; latency percentiles for logs
     resampler.js               streaming low-pass + resample (pure, used by the worklet)
     db.js                      IndexedDB stores: meetings, segments, chunks, logs
     log.js                     structured logger (console + IndexedDB), export as JSONL
@@ -50,7 +55,7 @@ docs/                          architecture and troubleshooting
 
 ## Conventions
 
-- **Plain ES modules, no framework, no dependencies.** Keep it that way unless there is a strong reason. The content script is the exception: Chrome loads content scripts as classic scripts, so `meeting-watch.js` cannot `import` and guards against double injection with `window.__meetscribeWatch`.
+- **Plain ES modules, no framework, no dependencies.** Keep it that way unless there is a strong reason. Content scripts are the exception: Chrome loads them as classic scripts, so `meeting-watch.js` and `captions.js` cannot `import` and guard against double injection with a `window.__meetscribe*` flag.
 - **UI strings go through i18n.** Pages support Chinese, Japanese and English (setting `uiLanguage`, `''` = follow the browser, fallback Chinese). Add every new UI string to all three tables in `src/lib/strings.js` and use it via `t('key', { params })` in JS or `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` in HTML (keep the Chinese text in the HTML as fallback). Pages call `await initI18n(log)` from `src/ui/i18n.js` before rendering. `npm test` checks that all languages have the same keys and placeholders. Code comments are mostly Chinese; match the surrounding file. Log messages, identifiers, thrown `Error` messages and other program-level text (status/progress from `src/lib`, the service worker and offscreen) are English, so logs are greppable; pages add a translated prefix when they show them. See "UI language" in `docs/architecture.md`.
 - **Message types live in `src/lib/messages.js`.** Add new ones there, never as string literals elsewhere. Commands carry `target: 'sw'` or `target: 'offscreen'`. Every `onMessage` listener must return `false` for messages it does not handle, or it will swallow other listeners' responses.
 - **Pure logic goes in `src/lib/` with a unit test.** Anything that can run without Chrome APIs (token assembly, time math, formatting, reconnection/gap logic with a fake WebSocket) should be testable from Node.
@@ -92,6 +97,6 @@ When you receive an exported `.jsonl` log: the first line is a header with the m
 
 ## Do not
 
-- Do not add a backend, analytics or any network call other than Soniox.
+- Do not add a backend, analytics or any network call other than Soniox and OpenAI (AI notes, text only, only with the user's own key).
 - Do not commit API keys, recordings, exported logs, or third-party extension packages (`*.crx`).
 - Do not make recording conditional on transcription succeeding.

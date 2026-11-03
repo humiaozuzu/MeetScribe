@@ -8,6 +8,7 @@ export const SW = {
   GET_STATE: 'sw:get-state',
   SET_LANGUAGES: 'sw:set-languages', // { languageHints }：会议中修改语言
   CANCEL_AUTO_STOP: 'sw:cancel-auto-stop', // 离开会议后的自动停止倒计时中，用户选择继续录制
+  SET_CAPTIONS: 'sw:set-captions', // { enabled }：开 / 关悬浮字幕（侧边栏、或字幕条上的 ×）；content/captions.js 里写的是字面量
 };
 
 export const OFFSCREEN = {
@@ -17,6 +18,9 @@ export const OFFSCREEN = {
   GET_LIVE: 'offscreen:get-live', // 侧边栏打开时取当前状态
   SET_LANGUAGES: 'offscreen:set-languages', // { languageHints }
   SET_MIC_MUTED: 'offscreen:set-mic-muted', // { muted, signal }：会议里麦克风静音状态
+  SET_CAPTIONS: 'offscreen:set-captions', // { enabled }：是否发出悬浮字幕
+  NOTES_NOW: 'offscreen:notes-now',       // 立即更新一次纪要
+  FINISH_NOTES: 'offscreen:finish-notes', // { meetingId }：会议结束后整理完整纪要（SW 等它做完再关 offscreen）
 };
 
 export const EVT = {
@@ -34,6 +38,16 @@ export const EVT = {
   MIC_STATE: 'cs:mic',                 // { muted: true|false|null, platform, signal }（内容脚本 → SW）
   MIC_MUTED: 'rt:mic-muted',           // { meetingId, muted }（offscreen → 页面）
   SPEAKERS: 'meeting:speakers',        // { meetingId }：说话人改名 / 合并了（页面 → 页面）
+  NOTES: 'meeting:notes',              // { meetingId, state, error?, notes? }：AI 纪要更新 / 状态变化
+  CAPTION: 'rt:caption',               // { meetingId, rows }：悬浮字幕内容（offscreen → SW，SW 转发给会议标签页）
+  CAPTIONS_STATE: 'meeting:captions',  // { enabled }：悬浮字幕开关变了（SW → 页面）
+};
+
+// SW → 会议标签页里的 content/captions.js（chrome.tabs.sendMessage）。内容脚本不能 import，那边写的是字面量。
+export const CAPTION = {
+  SHOW: 'cap:show',  // { labels, me, them }
+  ROWS: 'cap:rows',  // { rows: [{ source, text, pending, translation }] }
+  HIDE: 'cap:hide',
 };
 
 // 转写状态

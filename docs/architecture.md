@@ -5,7 +5,7 @@
 1. Show live captions of a Meet or Teams call, with "me" and "them" separated.
 2. **Never lose the meeting.** The local recording is independent of the network and the speech API.
 3. Recover after the fact: fill transcription gaps from the recording.
-4. No backend. Everything stays local except the audio sent to Soniox.
+4. No backend. Everything stays local except the audio sent to Soniox and, only with the user's OpenAI key, the transcript text sent to OpenAI for AI notes.
 
 ## Components
 
@@ -14,10 +14,11 @@
 | Service worker | `src/background.js` | Event-driven; may be suspended | Start/stop, `tabCapture.getMediaStreamId`, offscreen lifecycle, session state (`chrome.storage.session`), auto stop, recovering stale meetings |
 | Offscreen document | `src/offscreen/*` | One meeting | Owns the `MediaStream`s, `AudioContext`, recorders and Soniox WebSockets |
 | Content script | `src/content/meeting-watch.js` | Meet/Teams tab | Reports in-call / left-call from the presence of the hang-up button, and the in-meeting mic mute state |
+| Content script | `src/content/captions.js` | Recorded tab, injected while floating captions are on | Floating caption bar (Shadow DOM) |
 | Popup | `src/popup/*` | While open | Choose languages, start/stop |
-| Side panel | `src/sidepanel/*` | While open | Live captions, status, levels, language switch, auto-stop countdown |
-| History | `src/history/*` | Tab | List, search, synced playback, retranscribe, export, delete |
-| Options | `src/options/*` | Tab | UI language, key, languages, vocabulary, microphone permission/device, auto stop/export, log level and export |
+| Side panel | `src/sidepanel/*` | While open | Live captions, AI notes tab, floating-caption switch, status, levels, language switch, auto-stop countdown. Reopening it rebuilds everything from IndexedDB plus `offscreen:get-live` |
+| History | `src/history/*` | Tab | List, search, synced playback, retranscribe, AI notes (write / rewrite), export, delete |
+| Options | `src/options/*` | Tab | UI language, Soniox and OpenAI keys, languages, vocabulary, floating captions, notes model/language, microphone permission/device, auto stop/export, log level and export |
 
 ## Start sequence
 
@@ -67,6 +68,7 @@ connecting ──open──► live ──close──► reconnecting ──(bac
 - **Buffer.** While not live, the last 10 s of PCM is kept and flushed on (re)connect.
 - **Gaps.** The client tracks `sentUpTo`, the last sample handed to Soniox. When a new session starts after `sentUpTo`, or `stop()` happens with unsent audio, it calls `onGap(fromSample, toSample)`. Audio arriving after `stop()` is ignored, so it is not reported as a gap.
 - **Mute.** Soniox bills real-time by stream duration, not by audio sent, so keepalive alone saves nothing. While muted, the client sends zeros in place of the mic audio for a 10 s grace period, which keeps the timeline continuous across short mutes. After that it ends the stream. Unmuting opens a new session, with audio buffered meanwhile. Muted audio is never reported as a gap. The recorder branch is unaffected, so the recording still contains it.
+- **Latency (logs only).** Measured in audio time against `sentUpTo` of the current session: `finalMs` (a word's `end_ms` → it arrives final), `endpointMs` (last word of a sentence → `<end>`, includes `max_endpoint_delay_ms`), and, with translation on, `translationMs` (wall clock from `<end>` to the first final translation token). Each minute `soniox stats` carries `latency: { finalMs, endpointMs, translationMs }` as `{ n, p50, p95, max }`. An `<end>` more than 5 s after the last word logs `soniox slow finalization` (at most once a minute).
 - **Timeline.** `onSessionStart(firstSample)` lets the track convert session-relative token times to meeting time: `pcmStartOffsetMs + firstSample / 16`.
 - **Recording zero.** `tracks[source].startOffsetMs` is taken in `MediaRecorder.onstart`, not when `start()` is called. Some microphones (iPhone Continuity, Bluetooth) take seconds to deliver audio, and the file starts at the first audio, so the call time made playback run ahead of the captions (measured: 2.7 s). The PCM branch counts silence from the start, so caption times were right. Recordings made before this fix are corrected in History once the real file duration is known: `lastChunk.at − duration` (`correctedStartOffset()` in `timeline.js`), written back to the meeting.
 
@@ -99,6 +101,45 @@ chunks(source) ─► Blob(webm) ─► POST /v1/files ─► POST /v1/transcrip
 - Language hints come from the meeting (the initial ones plus every mid-meeting change, from `meeting.transcription`), not from the current default settings. The meeting title is passed as context, the same as in real time.
 - Job ids are persisted in `meeting.jobs`, so a closed History tab can resume polling.
 - Progress is shown per source in 4 steps: prepare / upload (percentage, via XHR because `fetch` has no upload progress), queued, transcribing (elapsed time; Soniox reports no percentage), save.
+
+## AI notes (`notes.js`, `notes-runner.js`, `offscreen/live-notes.js`)
+
+Optional; on when `settings.openaiApiKey` is set. Only text goes to OpenAI (Chat Completions, JSON mode, `reasoning_effort: low` for gpt-5 / o-series models).
+
+```
+offscreen: TrackPipeline hooks.onSaved(seg) ─► LiveNotes.newIds
+  every 5 s: notesDue (first after 3 lines or 20 s, then every 60 s, only with new lines)
+    └─► updateNotes(incremental): segments with id > notes.lastSegId (≤ 300 lines / 40k chars)
+          prompt = current notes + new lines "L<segId> [mm:ss] Speaker: text"
+          reply → parseNotesReply: evidence ids → meeting ms; old items keep their times
+                → writtenIn(language) check; bad reply / wrong language: retry once, else keep old notes
+          meeting.notes = {…, lastSegId, language, model, updatedAt}; broadcast meeting:notes
+SW stopRecording (key set) ─► offscreen stays open ─► offscreen:finish-notes
+    waits for the running update, then updateNotes(final): whole transcript (≤ 150k chars) rewritten from scratch,
+    else incremental until covered; final = true; a meeting titled only by its Meet code takes the notes' title
+    heartbeat meeting:notes every 15 s keeps the SW awake; then closeOffscreenIfIdle
+```
+
+- Segment ids are autoincrement, so "new" means `id > lastSegId`, which works across the two tracks committing out of order.
+- Errors map to states (`notesErrorState`): `invalid-key`, `no-quota`, `model` (and `no-key`) stop live updates for this meeting; `rate-limited` / `failed` retry on the next interval. Recording and captions never wait on notes.
+- If the SW is suspended during the final pass, the offscreen still finishes and saves. `recoverStaleMeetings` closes an offscreen that pings `{ active: false, busy: false }`; `closeOffscreenIfIdle` never closes one that is still finishing notes (a new meeting can start meanwhile and reuse it).
+- After the meeting, the side panel and History can write or rewrite notes with `updateNotes(final)` from the page itself.
+- Notes language: `settings.notesLanguage`, or the UI language. Changing it makes the next update start over.
+
+## Floating captions (`captions.js`, `content/captions.js`)
+
+```
+offscreen: hooks.onPartial / onCommit / onUpdate ─► CaptionState (one row per source:
+           live partial, else the last committed segment + translation for 8 s)
+           └─ while on: rt:caption {rows}, throttled to 200 ms, re-checked every 1 s for expiry
+SW: rt:caption ─► chrome.tabs.sendMessage(active.tabId, cap:rows)
+    on start / switch on / tab reload: executeScript(content/captions.js) + cap:show {labels}
+content script: Shadow DOM bar, click-through text; grip to drag, A− / A+, × (= sw:set-captions false)
+```
+
+- Independent of the side panel: closing it does not affect the bar. It lives inside the meeting tab, so it is not visible from other tabs.
+- The switch is `settings.floatingCaptions`, mirrored in `active.captions`; `meeting:captions` keeps the side panel checkbox in sync. When off, the offscreen sends nothing, so the SW is not woken up for captions.
+- Position and font size are kept in `chrome.storage.local.captionBox`. Labels come translated from the SW, because content scripts cannot import the string table.
 
 ## Auto stop
 
@@ -144,7 +185,7 @@ The extension pages (popup, side panel, history, options) are translated into Ch
 
 | Store | Key | Fields |
 |---|---|---|
-| `meetings` | `id` (uuid) | `title, url, startedAt, endedAt, status ('recording'\|'done'\|'interrupted'), stopReason, tracks{them,me}{mimeType, chunks, bytes, startOffsetMs, pcmStartOffsetMs, seconds, transcription}, gaps[{source,startMs,endMs,reason,filled}], jobs[], transcription{enabled, model, languageHints, languageChanges[{atMs,from,languageHints}], translationTarget}, micError, exportPending, retranscribed, speakers{[speakerKey]: {name}\|{alias}}` |
+| `meetings` | `id` (uuid) | `title, url, startedAt, endedAt, status ('recording'\|'done'\|'interrupted'), stopReason, notes (AI notes, see notes.js), tracks{them,me}{mimeType, chunks, bytes, startOffsetMs, pcmStartOffsetMs, seconds, transcription}, gaps[{source,startMs,endMs,reason,filled}], jobs[], transcription{enabled, model, languageHints, languageChanges[{atMs,from,languageHints}], translationTarget}, micError, exportPending, retranscribed, speakers{[speakerKey]: {name}\|{alias}}` |
 | `segments` | auto | `meetingId (idx), source, speaker, speakerKey, language, startMs, endMs, text, translation, origin ('realtime'\|'async')` |
 | `chunks` | auto | `meetingId (idx), source, seq, blob, size, at` |
 | `logs` | auto | `ts (idx), level, ctx, msg, data, meetingId?, source?` — kept for 14 days, at most 50k entries |
@@ -155,9 +196,10 @@ The extension pages (popup, side panel, history, options) are translated into Ch
 
 All constants live in `src/lib/messages.js`.
 
-- Commands to the service worker (`target: 'sw'`): `sw:start`, `sw:stop`, `sw:get-state`, `sw:set-languages`, `sw:cancel-auto-stop`.
-- Commands to the offscreen document (`target: 'offscreen'`): `offscreen:start|stop|ping|get-live|set-languages|set-mic-muted`.
-- Broadcasts: `rt:segment`, `rt:segment-update`, `rt:partial`, `rt:status`, `rt:levels`, `rt:languages`, `rt:track-ended`, `meeting:state`, `meeting:ended`, `meeting:auto-stop`, `meeting:speakers`, `rt:mic-muted`, `cs:presence`, `cs:mic`.
+- Commands to the service worker (`target: 'sw'`): `sw:start`, `sw:stop`, `sw:get-state`, `sw:set-languages`, `sw:cancel-auto-stop`, `sw:set-captions`.
+- Commands to the offscreen document (`target: 'offscreen'`): `offscreen:start|stop|ping|get-live|set-languages|set-mic-muted|set-captions|notes-now|finish-notes`.
+- SW → recorded tab (`chrome.tabs.sendMessage`): `cap:show`, `cap:rows`, `cap:hide`.
+- Broadcasts: `rt:segment`, `rt:segment-update`, `rt:partial`, `rt:status`, `rt:levels`, `rt:languages`, `rt:track-ended`, `meeting:state`, `meeting:ended`, `meeting:auto-stop`, `meeting:speakers`, `meeting:notes`, `meeting:captions`, `rt:caption`, `rt:mic-muted`, `cs:presence`, `cs:mic`.
 
 ## Failure handling summary
 
