@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chatJson, checkModel, OpenAIError, isReasoningModel } from '../extension/src/lib/openai.js';
 import { LatencyStats, percentile } from '../extension/src/lib/latency.js';
-import { CaptionState, CAPTION_KEEP_MS } from '../extension/src/lib/captions.js';
+import { CaptionState, CAPTION_KEEP_MS, CAPTION_JOIN_MS, joinText } from '../extension/src/lib/captions.js';
 
 const fakeFetch = (status, body, seen = []) => async (url, init) => {
   seen.push({ url, init });
@@ -73,4 +73,23 @@ test('CaptionState: live line wins, committed line stays a while with its late t
   ]);
   c.partial('me', { finalText: '', pendingText: '' }, 3200);
   assert.deepEqual(c.rows(3000 + CAPTION_KEEP_MS), [], 'committed line disappears after a quiet spell');
+});
+
+test('CaptionState: the previous sentence stays in front of the next one until it is old', () => {
+  const c = new CaptionState();
+  c.commit('them', { startMs: 0, text: 'First sentence.', translation: '第一句。' }, 1000);
+  c.commit('them', { startMs: 2000, text: 'Second one.' }, 3000);
+  c.update('them', { startMs: 2000, translation: '第二句。' }, 3500);
+  c.partial('them', { finalText: 'And', pendingText: 'then' }, 4000);
+  assert.deepEqual(c.rows(4000), [{ source: 'them', text: 'Second one. And', pending: 'then', translation: '第一句。第二句。' }]);
+  c.partial('them', { finalText: 'Much later', pendingText: '' }, 3000 + CAPTION_JOIN_MS);
+  assert.deepEqual(c.rows(3000 + CAPTION_JOIN_MS), [{ source: 'them', text: 'Much later', pending: '', translation: '' }]);
+});
+
+test('joinText: no space between CJK, a space otherwise', () => {
+  assert.equal(joinText('你好。', '我们'), '你好。我们');
+  assert.equal(joinText('Hi.', 'there'), 'Hi. there');
+  assert.equal(joinText('Hi.', '好'), 'Hi.好');
+  assert.equal(joinText('', 'x'), 'x');
+  assert.equal(joinText('x', ''), 'x');
 });
