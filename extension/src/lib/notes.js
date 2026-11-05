@@ -2,7 +2,9 @@
 // 调用模型、读写数据库在 notes-runner.js。
 //
 // 思路（参考 Cicada）：会议中每隔一段时间把「当前纪要 + 新增的几行」发给模型，拿回完整的新纪要；
-// 会议结束后对全文再整理一遍（final）。每条要点 / 结论 / 待办都要引用原话的行号（L + 片段 id），
+// 会议结束后对全文再整理一遍（final）。模型每次都重写整份纪要，容易越写越偏向最近的内容、把早期话题
+// 并掉或删掉，所以：提示词里限制开新话题的节奏（当前话题不到 2 分钟不许开新的，final 按会议时长限话题数），
+// 代码里 keepEarlierTopics() 把回复里丢掉的旧话题补回来。每条要点 / 结论 / 待办都要引用原话的行号（L + 片段 id），
 // 解析时校验行号存在，换算成会议时间，界面上点一下就能跳回原话。回复解析失败或语言不对时丢弃，
 // 绝不覆盖已有的纪要。
 //
@@ -25,6 +27,11 @@ export const NOTES_BATCH_LINES = 300;
 export const NOTES_BATCH_CHARS = 40_000;
 // final 整体重写时整场转写的上限，超过就改为增量补完
 export const NOTES_FULL_MAX_CHARS = 150_000;
+
+// 新话题至少隔这么久；final 每这么长一段会议最多一个话题
+export const NOTES_TOPIC_MIN_MS = 120_000;
+export const NOTES_TOPIC_SPAN_MS = 180_000;
+const NOTES_CONTEXT_LINES = 2;
 
 const LIMITS = { topics: 10, points: 10, conclusions: 20, todos: 20, terms: 12, text: 500 };
 
@@ -73,7 +80,12 @@ export function planUpdate({ notes, lines, final }) {
     chars += l.text.length + 24;
   }
   batch.sort((a, b) => a.startMs - b.startMs || a.id - b.id);
-  return { mode: 'incremental', batch, more: batch.length < fresh.length };
+  // 新行前面带两行已经写进纪要的话，只作上下文（话题衔接、"他刚才说的"指谁）
+  const context = batch.length && !notesEmpty(notes)
+    ? lines.filter((l) => l.id <= last && l.startMs <= batch[0].startMs)
+      .sort((a, b) => a.startMs - b.startMs || a.id - b.id).slice(-NOTES_CONTEXT_LINES)
+    : [];
+  return { mode: 'incremental', batch, context, more: batch.length < fresh.length };
 }
 
 // 当前纪要的精简版（给模型看，不含内部字段和证据）
@@ -90,7 +102,25 @@ function compact(n) {
 
 const clock = (ms) => (ms == null ? null : formatClock(ms));
 
-export function buildNotesPrompt({ notes, batch, mode, language }) {
+// 这一次能不能开新话题，明确告诉模型（只说"话题要几分钟长"时模型拆得太勤）
+function topicHint({ notes, batch, full }) {
+  if (!batch.length) return '';
+  if (full) {
+    const span = batch.at(-1).startMs - batch[0].startMs;
+    const most = Math.max(1, Math.min(LIMITS.topics - 2, Math.floor(span / NOTES_TOPIC_SPAN_MS) + 1));
+    return `This meeting ran ${formatClock(span)}: use at most ${most} topic${most === 1 ? '' : 's'}.`;
+  }
+  const topics = notes?.topics || [];
+  if (!topics.length) return 'These are the first lines: make one topic.';
+  const cur = topics.at(-1);
+  const newest = Math.max(...batch.map((l) => l.startMs));
+  if (cur.startMs != null && newest - cur.startMs < NOTES_TOPIC_MIN_MS) {
+    return `The current topic "${cur.title}" started at ${formatClock(cur.startMs)}, under 2 minutes before the newest line: do not start a new topic in this update; add the new lines to it.`;
+  }
+  return '';
+}
+
+export function buildNotesPrompt({ notes, batch, context = [], mode, language }) {
   const full = mode === 'full';
   const system = [
     `You keep notes for a meeting ${full ? 'from its whole transcript' : 'that is still going on, updating them as new lines arrive'}.`,
@@ -98,6 +128,7 @@ export function buildNotesPrompt({ notes, batch, mode, language }) {
   ].join(' ');
   const parts = [];
   if (!full && !notesEmpty(notes)) parts.push(`Current notes (JSON):\n${JSON.stringify(compact(notes))}`);
+  if (!full && context.length) parts.push(`Already covered (context only):\n${context.map(lineText).join('\n')}`);
   parts.push([
     `${full ? 'Transcript' : 'New lines'}, one per line: id [mm:ss] speaker: text.`,
     '"Me" is the user; "Speaker N" is one person on the other side, told apart by voice and possibly wrong; "Others" is someone on the other side not told apart; any other label is a name.',
@@ -105,6 +136,8 @@ export function buildNotesPrompt({ notes, batch, mode, language }) {
     '',
     ...batch.map(lineText),
   ].join('\n'));
+  const hint = topicHint({ notes, batch, full });
+  if (hint) parts.push(hint);
   parts.push([
     'Return the full updated notes as one JSON object with exactly these keys:',
     '{"title": "a short name for the meeting",',
@@ -116,7 +149,9 @@ export function buildNotesPrompt({ notes, batch, mode, language }) {
     ' "terms": [{"name": "correct spelling", "note": "who or what, a few words", "heard": ["how the transcript misspelled it"]}]}',
     '',
     'Rules:',
-    `- Topics in time order, at most ${LIMITS.topics - 2}. A topic is a stretch of the meeting, usually several minutes, not a single remark. Start a new topic only when the subject clearly changes${full ? '' : '; add at most one new topic per update and keep earlier topics unless new lines correct them'}.`,
+    `- Topics in time order, at most ${LIMITS.topics - 2}. A topic is a stretch of the meeting, usually 3-10 minutes, not a single remark: start a new one only when the subject clearly changes and the current topic started at least 2 minutes before the newest line${full ? '; merge small neighbouring topics' : '; add at most one new topic per update'}. Otherwise add to the current one.`,
+    `- ${full ? 'Cover the whole meeting from the first line to the last, not only its end.' : 'Keep every earlier topic in the reply, as it is unless new lines correct it; never drop or merge away earlier topics. The last topic is the one being discussed now.'}`,
+    `- summary: about the whole meeting so far, not only the latest lines.`,
     '- At most 6 points per topic. Merge repeats; keep numbers, dates and names exact.',
     '- Every point, conclusion and to-do needs evidence: the ids of the lines that say it. Never state anything the transcript does not say.',
     '- Conclusions only for things actually decided or agreed; to-dos only for actions someone committed to or was asked to do.',
@@ -125,6 +160,20 @@ export function buildNotesPrompt({ notes, batch, mode, language }) {
     '- Use empty arrays when there is nothing. No markdown, no text outside the JSON.',
   ].join('\n'));
   return { system, user: parts.join('\n\n') };
+}
+
+// 增量更新时模型偶尔把早期话题删掉或并掉（整份纪要越写越只剩后半场）。回复里找不到的旧话题
+// （标题不同、开始时间也不同）按时间插回去。返回 { topics, restored }。
+export function keepEarlierTopics(prev, next) {
+  const topics = [...(next?.topics || [])];
+  const titles = new Set(topics.map((tp) => tp.title));
+  const starts = new Set(topics.map((tp) => tp.startMs).filter((t) => t != null));
+  const restored = (prev?.topics || []).filter((tp) => !titles.has(tp.title) && !(tp.startMs != null && starts.has(tp.startMs)));
+  if (!restored.length) return { topics, restored: [] };
+  const key = (tp) => (tp.startMs == null ? Infinity : tp.startMs);
+  // 稳定排序：没有时间的话题留在原来的相对位置之后
+  const merged = [...restored, ...topics].map((tp, i) => ({ tp, i })).sort((a, b) => key(a.tp) - key(b.tp) || a.i - b.i).map((x) => x.tp);
+  return { topics: merged, restored };
 }
 
 const str = (v) => (typeof v === 'string' ? v.trim().slice(0, LIMITS.text) : '');

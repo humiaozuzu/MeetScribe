@@ -110,16 +110,20 @@ Optional; on when `settings.openaiApiKey` is set. Only text goes to OpenAI (Chat
 offscreen: TrackPipeline hooks.onSaved(seg) ─► LiveNotes.newIds
   every 5 s: notesDue (first after 3 lines or 20 s, then every 60 s, only with new lines)
     └─► updateNotes(incremental): segments with id > notes.lastSegId (≤ 300 lines / 40k chars)
-          prompt = current notes + new lines "L<segId> [mm:ss] Speaker: text"
+          prompt = current notes + 2 covered lines as context + new lines "L<segId> [mm:ss] Speaker: text"
+                   + topic pacing: first update = one topic; current topic < 2 min old = no new topic
           reply → parseNotesReply: evidence ids → meeting ms; old items keep their times
+                → keepEarlierTopics: topics the reply dropped are put back (log: notes reply dropped earlier topics)
                 → writtenIn(language) check; bad reply / wrong language: retry once, else keep old notes
           meeting.notes = {…, lastSegId, language, model, updatedAt}; broadcast meeting:notes
 SW stopRecording (key set) ─► offscreen stays open ─► offscreen:finish-notes
-    waits for the running update, then updateNotes(final): whole transcript (≤ 150k chars) rewritten from scratch,
+    waits for the running update, then updateNotes(final): whole transcript (≤ 150k chars) rewritten from scratch
+    (at most one topic per 3 min of meeting, max 8),
     else incremental until covered; final = true; a meeting titled only by its Meet code takes the notes' title
     heartbeat meeting:notes every 15 s keeps the SW awake; then closeOffscreenIfIdle
 ```
 
+- Why the guards: the model rewrites the whole notes each time and only sees the compact notes, not the early lines, so long meetings drifted to "only the second half". Prompt pacing keeps the topic count from hitting the cap early; `keepEarlierTopics` makes live notes never lose a topic. The final pass works from the full transcript.
 - Segment ids are autoincrement, so "new" means `id > lastSegId`, which works across the two tracks committing out of order.
 - Errors map to states (`notesErrorState`): `invalid-key`, `no-quota`, `model` (and `no-key`) stop live updates for this meeting; `rate-limited` / `failed` retry on the next interval. Recording and captions never wait on notes.
 - If the SW is suspended during the final pass, the offscreen still finishes and saves. `recoverStaleMeetings` closes an offscreen that pings `{ active: false, busy: false }`; `closeOffscreenIfIdle` never closes one that is still finishing notes (a new meeting can start meanwhile and reuse it).
@@ -130,7 +134,9 @@ SW stopRecording (key set) ─► offscreen stays open ─► offscreen:finish-n
 
 ```
 offscreen: hooks.onPartial / onCommit / onUpdate ─► CaptionState (one row per source:
-           live partial, else the last committed segment + translation for 8 s)
+           previous committed sentence (≤ 20 s old) + live partial, else the last committed segment for 8 s;
+           translation = recent committed translations joined; the bar keeps the last 2 lines, so the
+           previous sentence scrolls out as new words arrive instead of vanishing)
            └─ while on: rt:caption {rows}, throttled to 200 ms, re-checked every 1 s for expiry
 SW: rt:caption ─► chrome.tabs.sendMessage(active.tabId, cap:rows)
     on start / switch on / tab reload: executeScript(content/captions.js) + cap:show {labels}

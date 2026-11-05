@@ -71,6 +71,6 @@ That happened in older versions when exporting the same meeting twice. Exports n
 **All history disappeared.**
 Uninstalling or removing the extension deletes its IndexedDB. Reloading it does not. Enable auto export to keep copies in Downloads.
 | Captions feel slow | `soniox stats` → `latency.finalMs` / `endpointMs` (p50 / p95 / max, ms of audio), `soniox slow finalization`; `translationMs` when translation is on |
-| AI notes missing or stale | `notes update`, `notes model reply`, `notes update failed` (`state`: `invalid-key`, `no-quota`, `rate-limited`, `model`), `notes reply not usable JSON`, `notes reply not in the notes language`, `live notes started` / `live notes off` |
+| AI notes missing or stale | `notes update`, `notes model reply`, `notes update failed` (`state`: `invalid-key`, `no-quota`, `rate-limited`, `model`), `notes reply not usable JSON`, `notes reply not in the notes language`, `notes reply dropped earlier topics, restored` (early topics vanishing from live notes), `live notes started` / `live notes off` |
 | Final notes after the meeting | `final notes pass`, `final notes finished`, `final notes failed`, `offscreen kept open`, `openai key test failed` |
 | Floating captions not showing | `set floating captions`, `floating captions shown`, `show floating captions failed`, `floating captions` (offscreen, `enabled`) |

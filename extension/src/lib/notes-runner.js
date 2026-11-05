@@ -7,7 +7,8 @@ import { chatJson, OpenAIError, DEFAULT_OPENAI_MODEL } from './openai.js';
 import { resolveUiLang } from './i18n.js';
 import { meetingTopic } from './soniox-realtime.js';
 import {
-  NOTES_LANGUAGES, emptyNotes, transcriptLines, planUpdate, buildNotesPrompt, parseNotesReply, writtenIn,
+  NOTES_LANGUAGES, emptyNotes, notesEmpty, transcriptLines, planUpdate, buildNotesPrompt, parseNotesReply, writtenIn,
+  keepEarlierTopics,
 } from './notes.js';
 
 export function notesLanguageCode(settings, browserLangs = globalThis.navigator?.languages) {
@@ -60,8 +61,17 @@ export async function updateNotes({ meetingId, settings, final = false, log, fet
       mode: plan.mode, final, lines: plan.batch.length, total: lines.length, more: plan.more,
       chars: plan.batch.reduce((n, l) => n + l.text.length, 0), language: langCode,
     });
-    const prompt = buildNotesPrompt({ notes, batch: plan.batch, mode: plan.mode, language });
+    const prompt = buildNotesPrompt({ notes, batch: plan.batch, context: plan.context, mode: plan.mode, language });
     const { parsed, model } = await callModel({ settings, prompt, prev: notes, lineById, langCode, log, fetchImpl });
+    if (plan.mode === 'incremental' && !notesEmpty(notes)) {
+      const { topics, restored } = keepEarlierTopics(notes, parsed);
+      if (restored.length) {
+        log.warn('notes reply dropped earlier topics, restored', {
+          before: notes.topics.length, reply: parsed.topics.length, restored: restored.length,
+        });
+        parsed.topics = topics;
+      }
+    }
     notes = {
       ...parsed,
       title: parsed.title || notes.title,

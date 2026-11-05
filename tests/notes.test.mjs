@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  transcriptLines, notesDue, planUpdate, buildNotesPrompt, parseNotesReply, writtenIn, emptyNotes, notesEmpty,
+  transcriptLines, notesDue, planUpdate, buildNotesPrompt, parseNotesReply, writtenIn, emptyNotes, notesEmpty, keepEarlierTopics,
   NOTES_INTERVAL_MS, NOTES_BATCH_LINES, NOTES_FULL_MAX_CHARS,
 } from '../extension/src/lib/notes.js';
 import { notesMarkdown } from '../extension/src/lib/format.js';
@@ -116,4 +116,38 @@ test('notesMarkdown: sections with times, empty notes give nothing', () => {
   assert.match(md, /- c$/m);
   assert.match(md, /- \[ \] \*\*Me\*\*: do \[00:00\]/);
   assert.match(md, /\*\*X\*\* — n \(heard as: Y\)/);
+});
+
+test('planUpdate: incremental carries two already-covered lines as context', () => {
+  const lines = [1, 2, 3, 4, 5].map((id) => ({ id, startMs: id * 1000, speaker: 'Me', text: `l${id}` }));
+  const p = planUpdate({ notes: { summary: 'x', lastSegId: 3 }, lines, final: false });
+  assert.deepEqual(p.batch.map((l) => l.id), [4, 5]);
+  assert.deepEqual(p.context.map((l) => l.id), [2, 3]);
+  assert.deepEqual(planUpdate({ notes: emptyNotes(), lines, final: false }).context, []);
+});
+
+test('buildNotesPrompt: says when a new topic is not allowed, and caps final topics by length', () => {
+  const t = (startMs, title) => ({ startMs, title, summary: '', points: [] });
+  const line = (id, startMs) => ({ id, startMs, speaker: 'Me', text: 'x' });
+  const first = buildNotesPrompt({ notes: emptyNotes(), batch: [line(1, 0)], mode: 'incremental', language: 'English' });
+  assert.match(first.user, /first lines: make one topic/);
+  const notes = { ...emptyNotes(), summary: 's', topics: [t(0, 'Old'), t(300_000, 'Budget')] };
+  const soon = buildNotesPrompt({ notes, batch: [line(9, 360_000)], context: [line(8, 350_000)], mode: 'incremental', language: 'English' });
+  assert.match(soon.user, /"Budget" started at 05:00.*do not start a new topic/);
+  assert.match(soon.user, /Already covered \(context only\):\nL8/);
+  assert.match(soon.user, /never drop or merge away earlier topics/);
+  const later = buildNotesPrompt({ notes, batch: [line(9, 500_000)], mode: 'incremental', language: 'English' });
+  assert.doesNotMatch(later.user, /do not start a new topic/);
+  const full = buildNotesPrompt({ notes, batch: [line(1, 0), line(2, 10 * 60_000)], mode: 'full', language: 'English' });
+  assert.match(full.user, /ran 10:00: use at most 4 topics/);
+});
+
+test('keepEarlierTopics: puts back topics the reply dropped, in time order', () => {
+  const t = (startMs, title) => ({ startMs, title, summary: '', points: [] });
+  const prev = { topics: [t(0, 'Intro'), t(200_000, 'Budget'), t(400_000, 'Hiring')] };
+  const next = { topics: [t(200_000, 'Budget plan'), t(400_000, 'Hiring'), t(600_000, 'Launch')] };
+  const { topics, restored } = keepEarlierTopics(prev, next);
+  assert.deepEqual(restored.map((tp) => tp.title), ['Intro']);
+  assert.deepEqual(topics.map((tp) => tp.title), ['Intro', 'Budget plan', 'Hiring', 'Launch']);
+  assert.deepEqual(keepEarlierTopics(prev, { topics: prev.topics }).restored, []);
 });
